@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Rscript -e ':*)",
+      "WebFetch(domain:wrds-www.wharton.upenn.edu)",
+      "Bash(/usr/local/bin/Rscript -e ':*)"
+    ]
+  }
+}

@@ -1,0 +1,464 @@
+% Options for packages loaded elsewhere
+\PassOptionsToPackage{unicode}{hyperref}
+\PassOptionsToPackage{hyphens}{url}
+\documentclass[
+  10pt,
+]{article}
+\usepackage{xcolor}
+\usepackage[margin=0.8in]{geometry}
+\usepackage{amsmath,amssymb}
+\setcounter{secnumdepth}{-\maxdimen} % remove section numbering
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{textcomp} % provide euro and other symbols
+\else % if luatex or xetex
+  \usepackage{unicode-math} % this also loads fontspec
+  \defaultfontfeatures{Scale=MatchLowercase}
+  \defaultfontfeatures[\rmfamily]{Ligatures=TeX,Scale=1}
+\fi
+\usepackage{lmodern}
+\ifPDFTeX\else
+  % xetex/luatex font selection
+\fi
+% Use upquote if available, for straight quotes in verbatim environments
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+\IfFileExists{microtype.sty}{% use microtype if available
+  \usepackage[]{microtype}
+  \UseMicrotypeSet[protrusion]{basicmath} % disable protrusion for tt fonts
+}{}
+\makeatletter
+\@ifundefined{KOMAClassName}{% if non-KOMA class
+  \IfFileExists{parskip.sty}{%
+    \usepackage{parskip}
+  }{% else
+    \setlength{\parindent}{0pt}
+    \setlength{\parskip}{6pt plus 2pt minus 1pt}}
+}{% if KOMA class
+  \KOMAoptions{parskip=half}}
+\makeatother
+\usepackage{graphicx}
+\makeatletter
+\newsavebox\pandoc@box
+\newcommand*\pandocbounded[1]{% scales image to fit in text height/width
+  \sbox\pandoc@box{#1}%
+  \Gscale@div\@tempa{\textheight}{\dimexpr\ht\pandoc@box+\dp\pandoc@box\relax}%
+  \Gscale@div\@tempb{\linewidth}{\wd\pandoc@box}%
+  \ifdim\@tempb\p@<\@tempa\p@\let\@tempa\@tempb\fi% select the smaller of both
+  \ifdim\@tempa\p@<\p@\scalebox{\@tempa}{\usebox\pandoc@box}%
+  \else\usebox{\pandoc@box}%
+  \fi%
+}
+% Set default figure placement to htbp
+\def\fps@figure{htbp}
+\makeatother
+\setlength{\emergencystretch}{3em} % prevent overfull lines
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\usepackage{booktabs}
+\usepackage{float}
+\floatplacement{table}{H}
+\usepackage{caption}
+\captionsetup{font=small, labelfont=bf, skip=5pt}
+\usepackage{threeparttable}
+\usepackage{setspace}
+\singlespacing
+\pagestyle{plain}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{wrapfig}
+\usepackage{float}
+\usepackage{colortbl}
+\usepackage{pdflscape}
+\usepackage{tabu}
+\usepackage{threeparttable}
+\usepackage{threeparttablex}
+\usepackage[normalem]{ulem}
+\usepackage{makecell}
+\usepackage{xcolor}
+\usepackage{bookmark}
+\IfFileExists{xurl.sty}{\usepackage{xurl}}{} % add URL line breaks if available
+\urlstyle{same}
+\hypersetup{
+  pdftitle={Tables --- CEO--Employee Political Misalignment and Corporate Restructuring},
+  hidelinks,
+  pdfcreator={LaTeX via pandoc}}
+
+\title{Tables --- CEO--Employee Political Misalignment and Corporate
+Restructuring}
+\author{}
+\date{\vspace{-2.5em}}
+
+\begin{document}
+\maketitle
+
+\begin{table}[!h]
+\centering
+\caption{\label{tab:table1}Sample Construction}
+\centering
+\fontsize{9}{11}\selectfont
+\begin{threeparttable}
+\begin{tabular}[t]{clrr}
+\toprule
+Step & Description & Firm-Cycles & Unique Firms\\
+\midrule
+1 & All 13 cycle panels stacked (2000--2024) & 38,387 & 3,788\\
+2 & Non-missing CEO and employee ideology & 12,685 & 1,849\\
+3 & At least 20 employee donors per firm-cycle & 6,228 & 1,366\\
+4 & Merged with Compustat outcomes & 4,269 & 1,031\\
+5 & Excl. financials (SIC 60--67) and utilities (SIC 49) & 4,245 & 1,020\\
+\addlinespace
+6 & Non-missing restructuring charges DV & 4,161 & 1,018\\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}[para]
+\item \textit{Note: } 
+\item The sample is a biennial panel covering 13 election cycles (2000--2024). CEO ideology is a lifetime DIME CFscore matched from ExecuComp to DIME contributor records. Employee ideology is the mean CFscore of employee political donors per firm-cycle. Financials = SIC 6000--6799; Utilities = SIC 4900--4999. Restructuring charges = -SPI/AT (positive values indicate larger charges).
+\end{tablenotes}
+\end{threeparttable}
+\end{table}
+
+\newpage
+
+\begin{table}[!h]
+\centering
+\caption{\label{tab:table2}Descriptive Statistics}
+\centering
+\fontsize{9}{11}\selectfont
+\begin{threeparttable}
+\begin{tabular}[t]{lrrrrrr}
+\toprule
+Variable & N & Mean & SD & P25 & Median & P75\\
+\midrule
+\addlinespace[0.3em]
+\multicolumn{7}{l}{\textbf{Panel A: Ideology and Misalignment}}\\
+\hspace{1em}|Misalignment| & 4,245 & 0.863 & 0.647 & 0.292 & 0.747 & 1.334\\
+\hspace{1em}Signed Misalignment & 4,245 & 0.373 & 1.013 & -0.267 & 0.317 & 1.136\\
+\hspace{1em}CEO CFscore & 4,245 & 0.225 & 0.933 & -0.799 & 0.387 & 1.102\\
+\hspace{1em}Employee Mean CFscore & 4,245 & -0.148 & 0.599 & -0.654 & -0.224 & 0.305\\
+\hspace{1em}Employee CFscore SD & 4,245 & 0.820 & 0.282 & 0.627 & 0.856 & 1.042\\
+\hspace{1em}No. Employee Donors & 4,245 & 265.490 & 749.842 & 34.000 & 67.000 & 183.000\\
+\hspace{1em}Donor Coverage & 4,214 & 0.013 & 0.024 & 0.002 & 0.006 & 0.015\\
+\addlinespace[0.3em]
+\multicolumn{7}{l}{\textbf{Panel B: Outcomes}}\\
+\hspace{1em}Restructuring Charges (neg SPI/AT) & 4,161 & 0.014 & 0.056 & -0.000 & 0.005 & 0.014\\
+\hspace{1em}Layoff Indicator & 4,197 & 0.196 & 0.397 & 0.000 & 0.000 & 0.000\\
+\hspace{1em}Employee Change & 4,197 & 0.033 & 0.179 & -0.036 & 0.015 & 0.076\\
+\addlinespace[0.3em]
+\multicolumn{7}{l}{\textbf{Panel C: Moderators}}\\
+\hspace{1em}NBER Recession & 4,245 & 0.112 & 0.315 & 0.000 & 0.000 & 0.000\\
+\hspace{1em}Industry Peer Layoff Rate & 4,240 & 0.248 & 0.115 & 0.171 & 0.235 & 0.293\\
+\hspace{1em}Industry Downturn & 4,240 & 0.168 & 0.374 & 0.000 & 0.000 & 0.000\\
+\addlinespace[0.3em]
+\multicolumn{7}{l}{\textbf{Panel D: Lagged Controls}}\\
+\hspace{1em}Firm Size (log assets) & 4,243 & 8.881 & 1.491 & 7.803 & 8.848 & 9.836\\
+\hspace{1em}ROA & 4,243 & 0.045 & 0.112 & 0.016 & 0.053 & 0.092\\
+\hspace{1em}Leverage & 4,238 & 0.604 & 0.241 & 0.453 & 0.588 & 0.727\\
+\hspace{1em}Tobin's Q & 4,185 & 2.516 & 1.723 & 1.542 & 1.999 & 2.808\\
+\hspace{1em}Sales Growth & 4,234 & 0.082 & 0.289 & -0.013 & 0.059 & 0.141\\
+\hspace{1em}Loss Indicator & 4,243 & 0.181 & 0.385 & 0.000 & 0.000 & 0.000\\
+\hspace{1em}Capex / Assets & 4,237 & 0.043 & 0.041 & 0.017 & 0.031 & 0.054\\
+\hspace{1em}R\&D / Assets & 4,243 & 0.032 & 0.056 & 0.000 & 0.004 & 0.043\\
+\hspace{1em}Acquisition Indicator & 4,243 & 0.530 & 0.499 & 0.000 & 1.000 & 1.000\\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}[para]
+\item \textit{Note: } 
+\item Sample: 4,245 firm-cycle observations (1,020 firms). Financials and utilities excluded. All controls are lagged one period. Restructuring charges = -SPI/AT. Layoff = 1 if employee change < -5 percent. Donor coverage = no. employee donors / total employees.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}
+
+\newpage
+
+\begin{table}[!h]
+\centering
+\caption{\label{tab:table3}Baseline: Misalignment and Restructuring Charges}
+\centering
+\fontsize{8}{10}\selectfont
+\begin{threeparttable}
+\begin{tabular}[t]{lcccc}
+\toprule
+ & (1) & (2) & (3) & (4)\\
+\midrule
+|Misalignment| & -0.0016 & -0.0029 & -0.0024 & -0.0024\\
+ & (0.0013) & (0.0019) & (0.0019) & (0.0019)\\
+Employee Mean CFscore &  &  &  & -0.0022\\
+ &  &  &  & \vphantom{1} (0.0028)\\
+Employee CFscore SD &  &  &  & 0.0002\\
+\addlinespace
+ &  &  &  & (0.0048)\\
+CEO Turnover &  &  &  & 0.0042\\
+ &  &  &  & (0.0028)\\
+First-Year CEO &  &  &  & 0.0015\\
+ &  &  &  & (0.0020)\\
+\addlinespace
+Log(No. Donors) &  &  &  & 0.0007\\
+ &  &  &  & (0.0022)\\
+Firm Size & -0.0007 & 0.0067*** & 0.0086*** & 0.0064**\\
+ & (0.0007) & (0.0021) & (0.0032) & (0.0030)\\
+ROA & 0.0054 & 0.0190 & 0.0228 & 0.0179\\
+\addlinespace
+ & (0.0193) & (0.0153) & (0.0154) & (0.0179)\\
+Leverage & -0.0176*** & -0.0526*** & -0.0493*** & -0.0390***\\
+ & (0.0061) & (0.0143) & (0.0142) & (0.0126)\\
+Tobin's Q & -0.0024*** & -0.0020** & -0.0023** & -0.0026***\\
+ & (0.0005) & (0.0009) & (0.0009) & (0.0009)\\
+\addlinespace
+Sales Growth & -0.0011 & 0.0035 & 0.0012 & -0.0007\\
+ & (0.0026) & (0.0040) & (0.0041) & (0.0040)\\
+Loss & 0.0108** & 0.0062 & 0.0076* & 0.0071\\
+ & (0.0045) & (0.0046) & (0.0045) & (0.0043)\\
+Capex/Assets & -0.0528*** & 0.0601 & 0.0137 & 0.0332\\
+\addlinespace
+ & (0.0172) & (0.0394) & (0.0410) & (0.0424)\\
+R\&D/Assets & 0.0334* & 0.0591 & 0.0621 & 0.0448\\
+ & (0.0193) & (0.0410) & (0.0410) & (0.0424)\\
+Acquisition & 0.0009 & 0.0001 & 0.0005 & 0.0018\\
+ & (0.0018) & (0.0022) & (0.0021) & (0.0022)\\
+\midrule
+\addlinespace
+Fixed Effects & None & Firm & Firm + Year & Firm + Year\\
+Cluster & Firm & Firm & Firm & Firm\\
+Observations & 4,088 & 3,803 & 3,803 & 3,462\\
+R-squared & 0.017 & 0.031 & 0.030 & 0.025\\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}[para]
+\item \textit{Note: } 
+\item Dependent variable: Restructuring charges (= -SPI/AT; positive values indicate larger charges). Column (1) is pooled OLS. Column (2) adds firm fixed effects. Column (3) adds year fixed effects. Column (4) adds employee ideology, CEO turnover, and donor count controls. Standard errors clustered by firm in all columns. ***, **, * denote significance at the 1, 5, and 10 percent levels.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}
+
+\newpage
+
+\begin{table}[!h]
+\centering
+\caption{\label{tab:table4}Recession Moderation of Misalignment Effect on Restructuring}
+\centering
+\resizebox{\ifdim\width>\linewidth\linewidth\else\width\fi}{!}{
+\fontsize{8}{10}\selectfont
+\begin{threeparttable}
+\begin{tabular}[t]{lccccc}
+\toprule
+ & (1) & (2) & (3) & (4) & (5)\\
+\midrule
+|Misalignment| & -0.0023* & -0.0038** & -0.0037** & -0.0037** & -0.0034*\\
+ & (0.0013) & (0.0018) & (0.0018) & (0.0018) & (0.0019)\\
+|Misalignment| × Recession & 0.0088*** & 0.0088*** & 0.0119** & 0.0120** & 0.0088**\\
+ & (0.0030) & (0.0032) & (0.0050) & (0.0050) & (0.0044)\\
+Employee Mean CFscore &  &  &  & -0.0029 & \\
+\addlinespace
+ &  &  &  & (0.0028) & \\
+Employee CFscore SD &  &  &  & 0.0054 & \\
+ &  &  &  & (0.0054) & \\
+CEO Turnover &  &  &  &  & 0.0044\\
+ &  &  &  &  & (0.0028)\\
+\addlinespace
+First-Year CEO &  &  &  &  & 0.0016\\
+ &  &  &  &  & (0.0020)\\
+Firm Size & -0.0006 & 0.0076*** & 0.0086*** & 0.0086*** & 0.0066**\\
+ & (0.0007) & (0.0022) & (0.0032) & (0.0032) & (0.0028)\\
+ROA & 0.0057 & 0.0195 & 0.0223 & 0.0226 & 0.0176\\
+\addlinespace
+ & (0.0192) & (0.0153) & (0.0156) & (0.0157) & (0.0181)\\
+Leverage & -0.0176*** & -0.0516*** & -0.0490*** & -0.0482*** & -0.0385***\\
+ & (0.0061) & (0.0142) & (0.0142) & (0.0143) & (0.0123)\\
+Tobin's Q & -0.0023*** & -0.0018** & -0.0024*** & -0.0023*** & -0.0026***\\
+ & (0.0005) & (0.0009) & (0.0009) & (0.0009) & (0.0010)\\
+\addlinespace
+Sales Growth & -0.0014 & 0.0029 & 0.0014 & 0.0013 & -0.0006\\
+ & (0.0026) & (0.0039) & (0.0041) & (0.0041) & (0.0040)\\
+Loss & 0.0112** & 0.0061 & 0.0076* & 0.0076* & 0.0071\\
+ & (0.0045) & (0.0045) & (0.0046) & (0.0046) & (0.0043)\\
+Capex/Assets & -0.0596*** & 0.0426 & 0.0150 & 0.0169 & 0.0347\\
+\addlinespace
+ & (0.0171) & (0.0388) & (0.0412) & (0.0413) & (0.0421)\\
+R\&D/Assets & 0.0297 & 0.0577 & 0.0622 & 0.0615 & 0.0454\\
+ & (0.0193) & (0.0391) & (0.0395) & (0.0396) & (0.0414)\\
+Acquisition & 0.0006 & -0.0001 & 0.0003 & 0.0003 & 0.0017\\
+ & (0.0018) & (0.0022) & (0.0021) & (0.0021) & (0.0022)\\
+\midrule
+\addlinespace
+Fixed Effects & None & Firm & Firm + Year & Firm + Year & Firm + Year\\
+Cluster & Firm & Firm & Firm & Firm & Firm\\
+Observations & 4,088 & 3,803 & 3,803 & 3,803 & 3,462\\
+R-squared & 0.019 & 0.034 & 0.033 & 0.033 & 0.027\\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}[para]
+\item \textit{Note: } 
+\item Dependent variable: Restructuring charges (-SPI/AT). Recession = 1 during NBER recession years (2001, 2008--2009, 2020). Recession is year-level and fully absorbed by year FE, so no standalone recession main effect is included. Standard errors clustered by firm. ***, **, * denote significance at the 1, 5, and 10 percent levels.
+\end{tablenotes}
+\end{threeparttable}}
+\end{table}
+
+\begin{table}[!h]
+\centering
+\caption{\label{tab:table4-net}Net Effect of Misalignment by Recession Status (from Column 3)}
+\centering
+\fontsize{9}{11}\selectfont
+\begin{threeparttable}
+\begin{tabular}[t]{lrrr}
+\toprule
+Period & Net Effect & SE & p-value\\
+\midrule
+Non-recession & -0.0037** & 0.0018 & 0.0468\\
+Recession & 0.0082 & 0.0054 & 0.1294\\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}[para]
+\item \textit{Note: } 
+\item Non-recession effect = coef(|Misalignment|). Recession effect = coef(|Misalignment|) + coef(|Misalignment| x Recession). ***, **, * denote significance at the 1, 5, and 10 percent levels.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}
+
+\newpage
+
+\begin{table}[!h]
+\centering
+\caption{\label{tab:table5}Donor Threshold Sensitivity}
+\centering
+\fontsize{9}{11}\selectfont
+\begin{threeparttable}
+\begin{tabular}[t]{lrrrrrr}
+\toprule
+Threshold & N & Firms & Base Coef & Base SE & Int. Coef & Int. SE\\
+\midrule
+20+ & 3,803 & 1,018 & -0.0037** & 0.0018 & 0.0119** & 0.0050\\
+30+ & 3,052 & 860 & -0.0024 & 0.0020 & 0.0082 & 0.0051\\
+50+ & 2,255 & 657 & -0.0003 & 0.0021 & 0.0094 & 0.0057\\
+100+ & 1,410 & 447 & 0.0004 & 0.0019 & 0.0039 & 0.0054\\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}[para]
+\item \textit{Note: } 
+\item Each row re-estimates the specification from Table 4, Column (3) on the subsample with at least the indicated number of employee donors. Base Coef is the |Misalignment| coefficient; Int. Coef is the interaction with Recession. All models include firm + year FE, full controls, and firm-clustered SEs. ***, **, * denote significance at the 1, 5, and 10 percent levels.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}
+
+\newpage
+
+\begin{table}[!h]
+\centering
+\caption{\label{tab:table6}CEO Ideology Level Test}
+\centering
+\fontsize{9}{11}\selectfont
+\begin{threeparttable}
+\begin{tabular}[t]{lcc}
+\toprule
+ & (1) & (2)\\
+\midrule
+|Misalignment| & -0.0037** & -0.0035**\\
+ & (0.0018) & (0.0018)\\
+CEO CFscore &  & -0.0003\\
+ &  & (0.0016)\\
+|Misalignment| × Recession & 0.0119** & 0.0118**\\
+\addlinespace
+ & (0.0050) & (0.0051)\\
+\midrule
+Controls & Yes & Yes\\
+Firm + Year FE & Yes & Yes\\
+Cluster & Firm & Firm\\
+Observations & 3,803 & 3,803\\
+\addlinespace
+R-squared & 0.033 & 0.033\\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}[para]
+\item \textit{Note: } 
+\item Dependent variable: Restructuring charges (-SPI/AT). Column (2) adds CEO CFscore as a direct control. The misalignment coefficient and recession interaction remain stable while CEO CFscore is insignificant (p = 0.835), indicating that the ideological gap---not the CEO's ideology level---drives the effect. Recession is year-level and absorbed by year FE. ***, **, * denote significance at the 1, 5, and 10 percent levels.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}
+
+\newpage
+
+\begin{table}[!h]
+\centering
+\caption{\label{tab:table7}Asymmetry Test: Conservative vs. Liberal CEO Misalignment}
+\centering
+\fontsize{9}{11}\selectfont
+\begin{threeparttable}
+\begin{tabular}[t]{lc}
+\toprule
+ & (1)\\
+\midrule
+CEO More Conservative & -0.0037*\\
+ & \vphantom{1} (0.0021)\\
+CEO More Liberal & -0.0035\\
+ & (0.0023)\\
+CEO More Cons. × Recession & 0.0130**\\
+\addlinespace
+ & (0.0063)\\
+CEO More Lib. × Recession & 0.0104*\\
+ & (0.0055)\\
+Firm Size & 0.0086***\\
+ & (0.0032)\\
+\addlinespace
+ROA & 0.0223\\
+ & (0.0156)\\
+Leverage & -0.0490***\\
+ & (0.0142)\\
+Tobin's Q & -0.0024***\\
+\addlinespace
+ & (0.0009)\\
+Sales Growth & 0.0014\\
+ & (0.0041)\\
+Loss & 0.0076*\\
+ & (0.0046)\\
+\addlinespace
+Capex/Assets & 0.0157\\
+ & (0.0413)\\
+R\&D/Assets & 0.0618\\
+ & (0.0394)\\
+Acquisition & 0.0003\\
+\addlinespace
+ & (0.0021)\\
+\midrule
+Firm + Year FE & Yes\\
+Cluster & Firm\\
+Observations & 3,803\\
+R-squared & 0.033\\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}[para]
+\item \textit{Note: } 
+\item Dependent variable: Restructuring charges (-SPI/AT). CEO More Conservative = max(signed misalignment, 0); CEO More Liberal = max(-signed misalignment, 0). Recession is year-level and absorbed by year FE. Wald test H0: Cons. interaction = Lib. interaction: Diff = 0.0025, SE = 0.0065, p = 0.699. ***, **, * denote significance at the 1, 5, and 10 percent levels.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}
+
+\newpage
+
+\begin{table}[!h]
+\centering
+\caption{\label{tab:table8}Leave-One-Recession-Out Robustness}
+\centering
+\fontsize{9}{11}\selectfont
+\begin{threeparttable}
+\begin{tabular}[t]{lrrrrrrr}
+\toprule
+Sample & |Misalign| & SE & Interaction & SE & Net Recess. & SE & N\\
+\midrule
+Full sample & -0.0037** & 0.0018 & 0.0119** & 0.0050 & 0.0082 & 0.0054 & 3,803\\
+Excl. 2001 & -0.0040** & 0.0018 & 0.0134** & 0.0055 & 0.0094 & 0.0058 & 3,675\\
+Excl. 2008--2009 & -0.0038** & 0.0018 & 0.0073 & 0.0099 & 0.0035 & 0.0101 & 3,489\\
+Excl. 2020 & -0.0037** & 0.0018 & 0.0119** & 0.0050 & 0.0082 & 0.0054 & 3,803\\
+Excl. 2020--2021 & -0.0039* & 0.0020 & 0.0116** & 0.0050 & 0.0077 & 0.0055 & 3,277\\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}[para]
+\item \textit{Note: } 
+\item Dependent variable: Restructuring charges (-SPI/AT). All models: |Misalignment| + |Misalignment| x Recession + controls | firm + year FE, clustered by firm. |Misalign| is the non-recession effect. Interaction is the additional recession effect. Net Recess. = |Misalign| + Interaction (total effect during recessions). Each row excludes a different recession period. ***, **, * denote significance at the 1, 5, and 10 percent levels.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}
+
+\end{document}

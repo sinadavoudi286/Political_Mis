@@ -1,0 +1,473 @@
+---
+title: "CEO--Employee Political Ideology Misalignment: Variable Construction and Descriptive
+  Evidence"
+author: "Sina Davoudi"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    df_print: paged
+  pdf_document:
+    latex_engine: xelatex
+    fig_caption: true
+    number_sections: true
+    keep_tex: false
+geometry: margin=0.85in
+fontsize: 11pt
+header-includes:
+- \usepackage{booktabs}
+- \usepackage{float}
+- \floatplacement{figure}{H}
+- \floatplacement{table}{H}
+- \usepackage{setspace}
+- \onehalfspacing
+- \usepackage{caption}
+- \captionsetup{font=small, labelfont=bf}
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, results = 'markup', 
+                      message = FALSE, warning = FALSE)
+library(data.table)
+library(ggplot2)
+library(scales)
+library(patchwork)
+library(kableExtra)
+
+# ── Color palette (colorblind-friendly) ──
+col_ceo  <- "#D55E00"   # vermillion (red/warm)
+col_emp  <- "#0072B2"   # blue
+col_grey <- "#999999"
+col_fill <- "#E5E5E5"
+
+# ── Theme ──
+theme_report <- theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(linewidth = 0.3, color = "#E0E0E0"),
+    plot.title = element_text(face = "bold", size = 11),
+    plot.subtitle = element_text(size = 9, color = "grey40"),
+    axis.title = element_text(size = 10),
+    legend.position = "bottom",
+    legend.title = element_text(size = 9),
+    legend.text = element_text(size = 8),
+    strip.text = element_text(face = "bold")
+  )
+theme_set(theme_report)
+```
+
+```{r load-data}
+setwd("/Users/homemac/Library/Mobile Documents/com~apple~CloudDocs/My Research/Accounting Research/Political_Accounting/Political Misalignment/Codes")
+load("panel_complete.rdata")
+pc <- copy(panel_complete)
+
+# Load reg_data for SIC codes
+load("reg_data_v3.rdata")
+if (!"fyear" %in% names(reg_data)) setnames(reg_data, "fyear_lead", "fyear")
+
+# Merge sich from reg_data to panel_complete
+sic_map <- unique(reg_data[, .(gvkey, sich, sic2)])
+# Also get sich from compustat for broader coverage
+load("compustat_outcomes.rdata")
+comp <- as.data.table(compustat)
+sic_comp <- unique(comp[!is.na(sich), .(gvkey, sich_comp = sich)])
+sic_comp[, sic2_comp := as.integer(substr(sprintf("%04d", sich_comp), 1, 2))]
+# Keep one per gvkey (most recent)
+sic_comp <- sic_comp[!duplicated(gvkey)]
+
+pc <- merge(pc, sic_map[!duplicated(gvkey), .(gvkey, sic2)], by = "gvkey", all.x = TRUE)
+pc[is.na(sic2), sic2 := sic_comp[match(pc[is.na(sic2)]$gvkey, gvkey)]$sic2_comp]
+
+# Exclude financials and utilities
+pc <- pc[!sic2 %in% c(49, 60:69)]
+
+# Industry groups
+pc[, industry := fcase(
+  sic2 %in% c(35, 36, 38) | sic2 == 73, "Technology",
+  sic2 %in% 20:39 & !(sic2 %in% c(35, 36, 38)), "Manufacturing",
+  sic2 %in% 70:89 & sic2 != 73, "Services",
+  sic2 %in% 50:59, "Retail/Wholesale",
+  sic2 %in% 10:17, "Mining/Construction",
+  sic2 %in% 40:48, "Transportation",
+  default = "Other"
+)]
+
+# Quality samples
+pc20 <- pc[n_emp_donors >= 20]
+pc5  <- pc[n_emp_donors >= 5]
+
+# Compute key statistics for inline use
+pct_ceo_more_cons <- round(100 * mean(pc20$misalign_signed > 0, na.rm = TRUE), 1)
+mean_misalign <- round(mean(pc20$misalign_abs, na.rm = TRUE), 2)
+med_misalign <- round(median(pc20$misalign_abs, na.rm = TRUE), 2)
+mean_ceo <- round(mean(pc20$ceo_cfscore, na.rm = TRUE), 2)
+mean_emp <- round(mean(pc20$emp_mean_cfscore, na.rm = TRUE), 2)
+```
+
+# Data and Construction
+
+This report documents the construction and properties of the CEO--employee political ideology misalignment variable used in the main analysis. I describe the underlying data sources, the measurement approach, and provide descriptive evidence on the distribution of misalignment across firms, industries, and time.
+
+## Data Sources
+
+Ideology is measured using DIME CFscores (Bonica, 2014), a unified political ideology scale estimated from the universe of U.S. campaign contribution records. The scale is continuous, with positive values indicating conservative ideology and negative values indicating liberal ideology. By using the same scale for both CEOs and employees, I avoid the cross-methodology comparability issues that would arise from combining different ideology measures.
+
+**CEO ideology.** I identify CEOs from ExecuComp's annual compensation file (S&P 1500 firms, 2000--2024) and match them to DIME contributor records by name. Of 8,180 unique CEOs in ExecuComp, 4,157 (50.8%) match to a DIME contributor with a valid CFscore. The CEO CFscore is time-invariant (a lifetime estimate from all contributions), so within-firm variation in misalignment over time is driven entirely by changes in employee ideology.
+
+**Employee ideology.** I match employer names reported by political donors in each two-year election cycle to Compustat firm identifiers (gvkey). For each firm-cycle, I compute the mean CFscore across all matched employee donors. The within-firm standard deviation of employee CFscores captures ideological dispersion within the workforce.
+
+**Misalignment.** The primary measure is the absolute distance between CEO and mean employee ideology: $$\text{Misalign}_{it} = | \text{CFscore}^{CEO}_{it} - \overline{\text{CFscore}}^{Emp}_{it} |$$ The signed variant, $\text{CFscore}^{CEO}_{it} - \overline{\text{CFscore}}^{Emp}_{it}$, captures the direction of disagreement: positive values indicate the CEO is more conservative than the workforce.
+
+# Summary Statistics
+
+Table 1 reports summary statistics for the misalignment measure and its components. Panel A uses the quality-filtered sample requiring at least 20 employee donors per firm-cycle, which ensures reasonable precision in the employee ideology estimate. Panel B relaxes this to 5 donors to demonstrate robustness. The two panels yield similar distributional properties, suggesting that the 20-donor threshold does not induce meaningful selection bias.
+
+In the quality sample, mean absolute misalignment is `r mean_misalign` CFscore units (median: `r med_misalign`), indicating substantial ideological distance between CEOs and their workforces. CEOs are, on average, moderately conservative (mean CFscore = `r mean_ceo`), while employees lean liberal (mean = `r mean_emp`). The within-firm standard deviation of employee CFscores averages 0.82, reflecting considerable ideological diversity within firms.
+
+```{r table1}
+desc_fn <- function(dt) {
+  vars <- c("misalign_abs", "misalign_signed", "ceo_cfscore",
+            "emp_mean_cfscore", "emp_sd_cfscore", "n_emp_donors")
+  labels <- c("Misalignment (absolute)", "Misalignment (signed)",
+              "CEO CFscore", "Employee mean CFscore",
+              "Employee SD of CFscore", "No. employee donors")
+
+  rbindlist(lapply(seq_along(vars), function(i) {
+    x <- dt[[vars[i]]]
+    data.table(
+      Variable = labels[i],
+      N = sum(!is.na(x)),
+      Mean = mean(x, na.rm = TRUE),
+      SD = sd(x, na.rm = TRUE),
+      P10 = quantile(x, 0.10, na.rm = TRUE),
+      P25 = quantile(x, 0.25, na.rm = TRUE),
+      Median = median(x, na.rm = TRUE),
+      P75 = quantile(x, 0.75, na.rm = TRUE),
+      P90 = quantile(x, 0.90, na.rm = TRUE)
+    )
+  }))
+}
+
+panA <- desc_fn(pc20)
+panB <- desc_fn(pc5)
+
+fmt  <- function(x, d = 3) formatC(x, format = "f", digits = d, big.mark = ",")
+fmt0 <- function(x) formatC(x, format = "d", big.mark = ",")
+
+make_tab <- function(d) {
+  data.frame(
+    Variable = d$Variable,
+    N = fmt0(d$N),
+    Mean = fmt(d$Mean),
+    SD = fmt(d$SD),
+    P10 = fmt(d$P10),
+    P25 = fmt(d$P25),
+    Median = fmt(d$Median),
+    P75 = fmt(d$P75),
+    P90 = fmt(d$P90)
+  )
+}
+
+tabA <- make_tab(panA)
+tabB <- make_tab(panB)
+
+note_text <- paste0(
+  "Panel A: ", fmt0(nrow(pc20)), " firm-cycles (",
+  fmt0(uniqueN(pc20$gvkey)), " firms, at least 20 donors). ",
+  "Panel B: ", fmt0(nrow(pc5)), " firm-cycles (",
+  fmt0(uniqueN(pc5$gvkey)), " firms, at least 5 donors). ",
+  "CFscores range approx. -2 to +2. ",
+  "Financials (SIC 60--67) and utilities (SIC 49) excluded."
+)
+
+kbl(
+  tabA,
+  booktabs = TRUE,
+  align = c("l", rep("r", 8)),
+  escape = FALSE,
+  caption = "Summary Statistics of the Misalignment Measure",
+  col.names = c("Variable","N","Mean","SD","P10","P25","Median","P75","P90")
+) %>%
+  kable_styling(
+    latex_options = c("hold_position", "scale_down"),
+    font_size = 9,
+    full_width = FALSE,
+    position = "center"
+  ) %>%
+  pack_rows("Panel A: Quality Sample (at least 20 Employee Donors)", 1, 6, escape = FALSE)
+```
+
+```{r table1b}
+kbl(
+  tabB,
+  booktabs = TRUE,
+  align = c("l", rep("r", 8)),
+  escape = FALSE,
+  col.names = c("Variable","N","Mean","SD","P10","P25","Median","P75","P90")
+) %>%
+  kable_styling(
+    latex_options = c("hold_position", "scale_down"),
+    font_size = 9,
+    full_width = FALSE,
+    position = "center"
+  ) %>%
+  pack_rows("Panel B: Broader Sample (at least 5 Employee Donors)", 1, 6, escape = FALSE) %>%
+  footnote(
+    general = note_text,
+    general_title = "Note: ",
+    footnote_as_chunk = FALSE,
+    threeparttable = TRUE,
+    escape = FALSE
+  )
+```
+
+\newpage
+
+# Time-Series Patterns
+
+Table 2 reveals a striking temporal pattern: while CEO ideology has remained relatively stable around the center-right (mean CFscore declining gradually from 0.459 in 2000 to 0.045 by 2024), employee ideology has shifted markedly leftward, from 0.50 in 2000 to approximately $-0.50$ by the late 2010s. This divergence has driven a secular increase in CEO--employee misalignment over the sample period. Mean absolute misalignment rose from 0.64 in the 2000 cycle to over 0.936 by 2016 and has remained elevated since.
+
+The donor base has also expanded substantially, from an average of 87 employee donors per firm in 2000 to over 500 in the 2020 presidential election cycle, reflecting both growth in political participation and improvements in DIME coverage over time.
+
+```{r table2}
+cyc_tab <- pc20[, .(
+  N = .N,
+  `Mean |Misalign|` = round(mean(misalign_abs, na.rm=TRUE), 3),
+  `Mean Signed` = round(mean(misalign_signed, na.rm=TRUE), 3),
+  `Mean CEO CF` = round(mean(ceo_cfscore, na.rm=TRUE), 3),
+  `Mean Emp CF` = round(mean(emp_mean_cfscore, na.rm=TRUE), 3),
+  `Mean Donors` = round(mean(n_emp_donors, na.rm=TRUE), 0)
+), by = cycle][order(cycle)]
+
+kbl(cyc_tab, booktabs = TRUE, align = c("c", rep("r", 6)),
+    caption = "Misalignment by Election Cycle",
+    escape = FALSE,
+    col.names = c("Cycle","N","Mean |Misalign|","Mean Signed",
+                  "Mean CEO CF","Mean Emp CF","Mean Donors")) %>%
+  kable_styling(latex_options = c("hold_position"), font_size = 9) %>%
+  footnote(general = "Quality sample (at least 20 employee donors), excluding financials and utilities.",
+           general_title = "Note: ", footnote_as_chunk = TRUE, escape = FALSE)
+```
+
+Figure 1 displays the pooled distributions of CEO and employee ideology. The CEO distribution (orange) is roughly symmetric and centered slightly right of zero, while the employee distribution (blue) is centered to the left.
+
+```{r fig1, fig.cap="Distribution of CEO and Employee Political Ideology. Vertical dashed lines mark distribution means. CEO ideology (orange) is centered right of zero; employee ideology (blue) is centered left of zero. The gap between the means reflects the average signed misalignment.", fig.height=3.5}
+ceo_mean_val <- mean(pc20$ceo_cfscore, na.rm=TRUE)
+emp_mean_val <- mean(pc20$emp_mean_cfscore, na.rm=TRUE)
+
+ggplot() +
+  geom_density(data = pc20, aes(x = ceo_cfscore, fill = "CEO"),
+               alpha = 0.45, color = col_ceo, linewidth = 0.6) +
+  geom_density(data = pc20, aes(x = emp_mean_cfscore, fill = "Employees"),
+               alpha = 0.45, color = col_emp, linewidth = 0.6) +
+  geom_vline(xintercept = ceo_mean_val, linetype = "dashed", color = col_ceo, linewidth = 0.5) +
+  geom_vline(xintercept = emp_mean_val, linetype = "dashed", color = col_emp, linewidth = 0.5) +
+  scale_fill_manual(values = c("CEO" = col_ceo, "Employees" = col_emp), name = NULL) +
+  scale_x_continuous(limits = c(-2.5, 2.5),
+                     breaks = seq(-2, 2, 1)) +
+  labs(x = expression("Liberal" %<-% " Ideology " %->% "Conservative"),
+       y = "Density",
+       title = "Distribution of CEO and Employee Political Ideology") +
+  theme(legend.position = c(0.85, 0.85))
+
+ggsave("figures/fig1_ideology_densities.png", width = 6.5, height = 3.5, dpi = 300)
+```
+
+Figure 2 plots the time series of mean CEO and employee CFscores across election cycles. The shaded area between the two lines represents the signed misalignment, while annotations report the mean absolute misalignment for each cycle. The widening gap since 2008 is visually apparent: employee ideology dropped sharply while CEO ideology drifted only modestly leftward.
+
+```{r fig4, fig.cap="CEO and employee ideology over time. The shaded area represents signed misalignment (CEO minus employee mean). Annotations show mean absolute misalignment per cycle. The widening gap since 2008 reflects the leftward shift in employee ideology.", fig.height=4}
+trend <- pc20[, .(
+  ceo = mean(ceo_cfscore, na.rm=TRUE),
+  emp = mean(emp_mean_cfscore, na.rm=TRUE),
+  misalign = mean(misalign_abs, na.rm=TRUE)
+), by = cycle][order(cycle)]
+
+ggplot(trend, aes(x = cycle)) +
+  geom_ribbon(aes(ymin = emp, ymax = ceo), fill = col_fill, alpha = 0.7) +
+  geom_line(aes(y = ceo, color = "CEO"), linewidth = 1) +
+  geom_point(aes(y = ceo, color = "CEO"), size = 2) +
+  geom_line(aes(y = emp, color = "Employees"), linewidth = 1) +
+  geom_point(aes(y = emp, color = "Employees"), size = 2) +
+  geom_text(aes(y = (ceo + emp) / 2, label = sprintf("%.2f", misalign)),
+            size = 2.3, color = "grey30", nudge_x = 0.3) +
+  scale_color_manual(values = c("CEO" = col_ceo, "Employees" = col_emp), name = NULL) +
+  scale_x_continuous(breaks = seq(2000, 2024, 4)) +
+  labs(x = "Election Cycle", y = "Mean CFscore",
+       title = "CEO and Employee Ideology Over Time",
+       subtitle = "Shaded area = signed misalignment; annotations = mean |misalignment|") +
+  theme(legend.position = c(0.85, 0.15))
+
+ggsave("figures/fig4_ideology_trends.png", width = 6.5, height = 4, dpi = 300)
+```
+
+\newpage
+
+# Cross-Sectional Patterns
+
+Table 3 reports misalignment by industry group. Retail/Wholesale firms exhibit the highest mean absolute misalignment (0.99), followed by Technology (0.97) and Manufacturing (0.92). In every industry, the signed misalignment is positive on average, confirming that the CEO-more-conservative pattern is pervasive across sectors rather than driven by a single industry. The variation across industries reflects differences in both CEO and employee ideology: technology firms, for instance, have relatively liberal employees but moderately conservative CEOs, generating high misalignment.
+
+```{r table3}
+ind_tab <- pc20[!is.na(industry), .(
+  N = .N,
+  `Mean |Misalign|` = round(mean(misalign_abs, na.rm=TRUE), 3),
+  `Mean Signed` = round(mean(misalign_signed, na.rm=TRUE), 3),
+  `Mean CEO CF` = round(mean(ceo_cfscore, na.rm=TRUE), 3),
+  `Mean Emp CF` = round(mean(emp_mean_cfscore, na.rm=TRUE), 3)
+), by = industry][order(-`Mean |Misalign|`)]
+
+kbl(ind_tab, booktabs = TRUE, align = c("l", rep("r", 5)),
+    caption = "Misalignment by Industry",
+    escape = FALSE,
+    col.names = c("Industry","N","Mean |Misalign|","Mean Signed",
+                  "Mean CEO CF","Mean Emp CF")) %>%
+  kable_styling(latex_options = c("hold_position"), font_size = 9) %>%
+  footnote(general = "Industry groups based on 2-digit SIC codes. Quality sample (at least 20 employee donors).",
+           general_title = "Note: ", footnote_as_chunk = TRUE, escape = FALSE)
+```
+
+Figure 3 visualizes the industry patterns as a horizontal bar chart. Bar color reflects the signed misalignment: warmer (more orange) tones indicate that CEOs are substantially more conservative than employees in that sector.
+
+```{r fig5, fig.cap="Mean absolute misalignment by industry group. Bar color intensity reflects the signed misalignment (darker orange = CEO substantially more conservative than employees).", fig.height=3.5}
+ind_plot <- pc20[!is.na(industry), .(
+  mean_abs = mean(misalign_abs, na.rm=TRUE),
+  mean_signed = mean(misalign_signed, na.rm=TRUE)
+), by = industry][order(mean_abs)]
+ind_plot[, industry := factor(industry, levels = industry)]
+
+ggplot(ind_plot, aes(x = mean_abs, y = industry, fill = mean_signed)) +
+  geom_col(width = 0.7) +
+  scale_fill_gradient2(low = col_emp, mid = "grey85", high = col_ceo,
+                       midpoint = 0, name = "Signed\nMisalign") +
+  labs(x = "Mean Absolute Misalignment", y = NULL,
+       title = "Misalignment by Industry") +
+  theme(panel.grid.major.y = element_blank())
+
+ggsave("figures/fig5_industry_bars.png", width = 6.5, height = 3.5, dpi = 300)
+```
+
+\newpage
+
+Figure 4 is the central visualization of the misalignment construct. Each point represents a firm-cycle, plotted in the space of employee mean ideology ($x$-axis) versus CEO ideology ($y$-axis). The 45-degree dashed line marks zero misalignment: points above this line represent firms where the CEO is more conservative than the workforce (orange), while points below indicate the reverse (blue). The pronounced mass of orange points above the diagonal---particularly in the upper-left region (conservative CEO, liberal employees)---confirms that CEO-more-conservative misalignment is the dominant pattern in the data.
+
+```{r fig6, fig.cap="CEO ideology vs. employee mean ideology. Each point is a firm-cycle. The diagonal line marks zero misalignment. Points above the line indicate the CEO is more conservative than employees. The dense cluster in the upper-left quadrant (conservative CEO, liberal employees) drives the measured misalignment.", fig.height=4.5}
+set.seed(42)
+samp <- pc20[sample(.N, min(.N, 4000))]
+
+ggplot(samp, aes(x = emp_mean_cfscore, y = ceo_cfscore, color = misalign_signed)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey50", linewidth = 0.5) +
+  geom_point(alpha = 0.35, size = 1.2) +
+  scale_color_gradient2(low = col_emp, mid = "grey80", high = col_ceo,
+                        midpoint = 0, limits = c(-2.5, 2.5),
+                        name = "Signed\nMisalign") +
+  coord_cartesian(xlim = c(-2.2, 2.2), ylim = c(-2.2, 2.2)) +
+  labs(x = expression("Employee Mean CFscore (" * liberal %<-% "" %->% conservative * ")"),
+       y = expression("CEO CFscore (" * liberal %<-% "" %->% conservative * ")"),
+       title = "CEO vs. Employee Ideology: The Misalignment Space") +
+  annotate("text", x = 1.5, y = -1.5, label = "CEO more\nliberal",
+           size = 2.8, color = col_emp, fontface = "italic") +
+  annotate("text", x = -1.5, y = 1.5, label = "CEO more\nconservative",
+           size = 2.8, color = col_ceo, fontface = "italic")
+
+ggsave("figures/fig6_scatter.png", width = 6.5, height = 4.5, dpi = 300)
+```
+
+\newpage
+
+# The Asymmetry
+
+A key feature of the misalignment measure is its directional asymmetry: `r pct_ceo_more_cons`% of firm-cycle observations have a CEO who is more conservative than the mean employee donor. This asymmetry is not a mechanical artifact of the scale; rather, it reflects a genuine empirical regularity in which corporate leaders tend to hold more conservative political views than their workforces.
+
+Figure 5 shows the distribution of absolute misalignment, which is right-skewed with a mean of `r mean_misalign` and a long right tail extending beyond 2.0 CFscore units. Figure 6 decomposes this into its signed components. The orange mass is visibly larger and extends further from zero, confirming that the asymmetry operates both on the extensive margin (more firms have conservative CEOs) and the intensive margin (the magnitude of conservative-CEO misalignment is larger).
+
+```{r fig2, fig.cap="Distribution of absolute CEO--employee ideology misalignment. Vertical dashed line marks the mean. The distribution is right-skewed, with most observations between 0.2 and 1.5 CFscore units.", fig.height=2.8}
+ggplot(pc20, aes(x = misalign_abs)) +
+  geom_histogram(aes(y = after_stat(density)), bins = 40, fill = col_grey, color = "white", linewidth = 0.2) +
+  geom_density(linewidth = 0.7, color = "black") +
+  geom_vline(xintercept = mean(pc20$misalign_abs), linetype = "dashed", color = col_ceo) +
+  labs(x = "Absolute CEO--Employee Ideology Distance", y = "Density",
+       title = "Distribution of Misalignment (Absolute)")
+
+ggsave("figures/fig2_abs_misalign_hist.png", width = 6.5, height = 2.8, dpi = 300)
+```
+
+```{r fig3, fig.cap="Distribution of signed misalignment. Positive values (orange) indicate the CEO is more conservative than the workforce; negative values (blue) indicate the reverse. Bin breaks are aligned at zero to avoid cross-boundary artifacts.", fig.height=3}
+# Build breaks explicitly so that zero is a bin boundary
+rng <- range(pc20$misalign_signed, na.rm = TRUE)
+bw <- 0.10  # bin width of 0.10 CFscore units
+neg_breaks <- rev(seq(0, floor(rng[1] / bw) * bw, by = -bw))
+pos_breaks <- seq(0, ceiling(rng[2] / bw) * bw, by = bw)
+all_breaks <- sort(unique(c(neg_breaks, pos_breaks)))
+
+ggplot(pc20, aes(x = misalign_signed, fill = misalign_signed > 0)) +
+  geom_histogram(breaks = all_breaks, color = "white", linewidth = 0.2) +
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.5) +
+  scale_fill_manual(values = c("FALSE" = col_emp, "TRUE" = col_ceo),
+                    labels = c("CEO more liberal", "CEO more conservative"),
+                    name = NULL) +
+  labs(x = expression("CEO More Liberal" %<-% " Signed Misalignment " %->% "CEO More Conservative"),
+       y = "Count",
+       title = "Signed Misalignment: A Conservative-CEO Asymmetry")
+
+ggsave("figures/fig3_signed_misalign.png", width = 6.5, height = 3, dpi = 300)
+```
+
+Figure 7 classifies each firm-cycle into one of four ideology quadrants based on the signs of CEO and employee CFscores. "Red-Blue" firms---those with a conservative CEO (CFscore $> 0$) and liberal employees (mean CFscore $\leq 0$)---constitute the largest category and exhibit the highest mean absolute misalignment (1.45). This quadrant represents the prototypical high-misalignment firm in our sample. By contrast, "same-side" firms (Red-Red or Blue-Blue) show substantially lower misalignment, as expected.
+
+```{r fig7, fig.cap="Firm classification into ideology quadrants. Panel (a) shows the share of firm-cycles in each quadrant. Panel (b) shows mean absolute misalignment within each quadrant. Red-Blue firms (conservative CEO, liberal employees) are the most common and most misaligned.", fig.height=3.5}
+pc20[, quad := fcase(
+  ceo_cfscore > 0 & emp_mean_cfscore > 0, "Red-Red",
+  ceo_cfscore > 0 & emp_mean_cfscore <= 0, "Red-Blue",
+  ceo_cfscore <= 0 & emp_mean_cfscore > 0, "Blue-Red",
+  ceo_cfscore <= 0 & emp_mean_cfscore <= 0, "Blue-Blue"
+)]
+pc20[, quad := factor(quad, levels = c("Red-Blue","Red-Red","Blue-Blue","Blue-Red"))]
+
+quad_cols <- c("Red-Blue" = "#C0392B", "Red-Red" = "#E8A0A0",
+               "Blue-Red" = "#85C1E9", "Blue-Blue" = "#2E86C1")
+
+quad_sum <- pc20[, .(N = .N, pct = .N/nrow(pc20)*100,
+                     mean_abs = mean(misalign_abs)), by = quad][order(-pct)]
+
+p7a <- ggplot(quad_sum, aes(x = quad, y = pct, fill = quad)) +
+  geom_col(width = 0.65) +
+  geom_text(aes(label = sprintf("%.1f%%", pct)), vjust = -0.3, size = 3) +
+  scale_fill_manual(values = quad_cols, guide = "none") +
+  labs(x = NULL, y = "% of Firm-Cycles", title = "(a) Quadrant Shares") +
+  theme(panel.grid.major.x = element_blank())
+
+p7b <- ggplot(quad_sum, aes(x = quad, y = mean_abs, fill = quad)) +
+  geom_col(width = 0.65) +
+  geom_text(aes(label = sprintf("%.2f", mean_abs)), vjust = -0.3, size = 3) +
+  scale_fill_manual(values = quad_cols, guide = "none") +
+  labs(x = NULL, y = "Mean |Misalignment|", title = "(b) Misalignment by Quadrant") +
+  theme(panel.grid.major.x = element_blank())
+
+p7a + p7b
+
+ggsave("figures/fig7_quadrants.png", width = 6.5, height = 3.5, dpi = 300)
+```
+
+# Data Quality
+
+The precision of the employee ideology measure depends on the number of employee donors at each firm-cycle. Figure 8 shows the distribution of donor counts on a log scale. The distribution spans three orders of magnitude, from a handful of donors at small firms to over 10,000 at the largest employers. Vertical dashed lines mark common filtering thresholds.
+
+```{r fig8, fig.cap="Distribution of employee donor counts per firm-cycle (log scale). Vertical lines mark common filtering thresholds. The analysis uses a quality threshold of 20 donors or more.", fig.height=3}
+n_ge20 <- sum(pc$n_emp_donors >= 20)
+pct_ge20 <- round(100 * mean(pc$n_emp_donors >= 20), 1)
+
+ggplot(pc[n_emp_donors >= 1], aes(x = n_emp_donors)) +
+  geom_histogram(bins = 60, fill = col_grey, color = "white", linewidth = 0.2) +
+  geom_vline(xintercept = c(5, 10, 20, 50), linetype = "dashed",
+             color = c("#BDC3C7","#95A5A6","#2C3E50","#2C3E50"), linewidth = 0.5) +
+  annotate("text", x = c(5, 10, 20, 50), y = Inf,
+           label = c("5","10","20","50"), vjust = 1.5, size = 2.5, color = "grey30") +
+  scale_x_log10(labels = comma) +
+  labs(x = "Number of Employee Donors (log scale)", y = "Count",
+       title = "Employee Donor Coverage Across Firm-Cycles") +
+  annotate("text", x = 3000, y = Inf, vjust = 2,
+           label = paste0("N >= 20: ", formatC(n_ge20, big.mark=","),
+                          " (", pct_ge20, "%)"),
+           size = 2.8, color = "grey30")
+
+ggsave("figures/fig8_donor_counts.png", width = 6.5, height = 3, dpi = 300)
+```

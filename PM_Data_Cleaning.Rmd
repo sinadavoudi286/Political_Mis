@@ -1,0 +1,916 @@
+---
+title: "Full Replication: CEO--Employee Political Misalignment and Corporate Restructuring"
+author: "Sina Davoudi"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    keep_tex: true
+    toc: true
+    toc_depth: 2
+    number_sections: true
+geometry: margin=0.8in
+fontsize: 10pt
+header-includes:
+  - \usepackage{booktabs}
+  - \usepackage{float}
+  - \floatplacement{table}{H}
+  - \usepackage{caption}
+  - \captionsetup{font=small, labelfont=bf, skip=5pt}
+  - \usepackage{threeparttable}
+  - \usepackage{setspace}
+  - \singlespacing
+  - \pagestyle{plain}
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+\newpage
+
+# Section 0: Packages and Setup
+
+This chunk loads all R packages used throughout the replication and sets
+global options.
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+## ── Packages ──
+library(data.table)
+library(fixest)
+library(kableExtra)
+library(stringdist)
+
+## no need for FE coefficients
+setFixest_notes(FALSE)
+
+knitr::opts_knit$set(
+  root.dir = "/Users/homemac/Library/Mobile Documents/com~apple~CloudDocs/My Research/Accounting Research/Political_Accounting/Political Misalignment/Codes"
+)
+```
+
+\newpage
+
+# Section 1: Cycle Processing Function {#sec-cycle}
+
+This section contains the reusable function that converts a raw DIME
+ContribDB cycle file (e.g., `contribDB_2018.csv`) into a firm-level
+employee ideology panel (`employee_panel_YYYY.rdata`).
+
+**How it works (pre-filter approach for speed):**
+
+1.  Read only the 5 needed columns from the CSV (keeps RAM low).
+2.  Filter to individual contributors with a valid CFscore and employer.
+3.  **Step 1 -- fast pre-match:** uppercase + trim employer names, then
+    match directly against the employer lookup. This catches \~84 % of
+    matchable rows *without* any regex.
+4.  **Step 2 -- suffix cleaning on unmatched remainder only:** run the
+    expensive `gsub()` suffix-removal loop on the \~16 % of unmatched
+    rows, then re-match.
+5.  Combine both sets of matches and aggregate to one row per
+    `gvkey * cycle` with employee ideology statistics.
+
+The chunk is set to `eval=FALSE` because processing the raw ContribDB
+files takes significant time and disk space. The outputs
+(`employee_panel_2000.rdata` -- `employee_panel_2024.rdata`) are already
+saved.
+
+```{r cycle-processing, eval=FALSE}
+## ── Set to the ContribDB file we want to process :"contribDB_2018.csv", "contribDB_2020.csv", etc.
+filename <- "contribDB_2018.csv"  # <-- I'll change for each cycle
+if (!file.exists(filename)) stop(paste("File not found:", filename,
+  "\nMake sure the raw ContribDB CSV is in your working directory."))
+
+cat("=== Processing:", filename, "===\n")
+cat("File size:", round(file.size(filename) / 1e9, 1), "GB\n")
+
+## Load the employer-name-to-gvkey lookup table ─
+## all_exact: data.table with columns (employer_clean, gvkey, conm)
+## Built in Section 3; contains 3,862 employer-name -> Compustat-gvkey pairs
+load("employer_lookup_for_panel.rdata")  # loads `all_exact`
+setDT(all_exact)
+cat("Employer lookup:", nrow(all_exact), "rows\n")
+
+## ── Suffix-cleaning function (must match the lookup construction exactly) ──
+## Strips common corporate suffixes from uppercase employer strings
+clean_employer <- function(x) {
+  suffixes <- c("\\s+INC\\.?$", "\\s+INCORPORATED$", "\\s+CORP\\.?$",
+                "\\s+CORPORATION$", "\\s+LLC$", "\\s+LLP$", "\\s+LP$",
+                "\\s+LTD\\.?$", "\\s+LIMITED$", "\\s+CO\\.?$",
+                "\\s+COMPANY$", "\\s+GROUP$", "\\s+HOLDINGS?$",
+                "\\s+ENTERPRISES?$", "\\s+INTERNATIONAL$",
+                "\\s+& CO\\.?$", "\\s+AND CO\\.?$",
+                ",\\s*INC\\.?$", ",\\s*LLC$", ",\\s*LTD\\.?$",
+                ",\\s*CORP\\.?$")
+  for (suf in suffixes) x <- gsub(suf, "", x)
+  gsub("\\s+", " ", trimws(x))
+}
+
+## ── Junk employer strings to exclude (self-employed, retired, etc.) ──
+junk <- c("SELF", "SELF-EMPLOYED", "SELF EMPLOYED", "SELFEMPLOYED",
+          "RETIRED", "NONE", "N/A", "NA", "NOT EMPLOYED",
+          "HOMEMAKER", "HOME MAKER", "STUDENT", "UNEMPLOYED",
+          "NOT APPLICABLE", "REFUSED", "INFORMATION REQUESTED",
+          "INFORMATION REQUESTED PER BEST EFFORTS")
+
+## ── Read only the 5 columns we need (keeps RAM ~2-4 GB instead of 27 GB) ──
+cols_needed <- c("cycle", "bonica.cid", "contributor.type",
+                 "contributor.employer", "contributor.cfscore")
+cat("Reading file...\n")
+t0 <- proc.time()
+dt <- fread(filename, select = cols_needed, showProgress = TRUE)
+elapsed_read <- round((proc.time() - t0)[3], 1)
+cat("Read", format(nrow(dt), big.mark = ","), "rows in", elapsed_read, "seconds\n")
+
+## Extract the election-cycle year from the first row
+cycle_val <- dt[1, cycle]
+cat("Cycle:", cycle_val, "\n")
+
+## ── Filter: keep only individual contributors with valid cfscore and employer ──
+dt <- dt[contributor.type == "I"]                          # individuals only
+cat("Individuals:", format(nrow(dt), big.mark = ","), "\n")
+
+dt[, contributor.cfscore := as.numeric(contributor.cfscore)]
+dt <- dt[!is.na(contributor.cfscore)]                      # must have ideology score
+cat("With cfscore:", format(nrow(dt), big.mark = ","), "\n")
+
+dt <- dt[!is.na(contributor.employer) & contributor.employer != ""]
+cat("With employer:", format(nrow(dt), big.mark = ","), "\n")
+
+## ══════════════════════════════════════════════════════════════
+## STEP 1: Fast pre-match (toupper + trimws only, NO suffix removal)
+## This avoids running expensive regex on 50M+ rows
+## ══════════════════════════════════════════════════════════════
+cat("Step 1: Fast pre-match (toupper + trimws only)...\n")
+t1 <- proc.time()
+dt[, employer_raw := toupper(trimws(contributor.employer))]
+
+## Remove junk employers
+dt <- dt[!employer_raw %in% junk]
+cat("After junk removal:", format(nrow(dt), big.mark = ","), "\n")
+
+## Direct merge on the raw uppercase name against the lookup
+matched1 <- merge(dt, all_exact[, .(employer_clean, gvkey)],
+                  by.x = "employer_raw", by.y = "employer_clean")
+cat("Step 1 matched rows:", format(nrow(matched1), big.mark = ","),
+    "| gvkeys:", uniqueN(matched1$gvkey),
+    "| time:", round((proc.time() - t1)[3], 1), "s\n")
+
+## ══════════════════════════════════════════════════════════════
+## STEP 2: Suffix-clean ONLY the unmatched rows (much smaller set)
+## ══════════════════════════════════════════════════════════════
+matched_raw <- unique(matched1$employer_raw)
+unmatched <- dt[!employer_raw %in% matched_raw]
+cat("Unmatched rows for suffix cleaning:", format(nrow(unmatched), big.mark = ","), "\n")
+
+rm(dt); gc()  # free memory before the regex pass
+
+t2 <- proc.time()
+unmatched[, employer_clean := clean_employer(employer_raw)]
+
+## Re-match the cleaned names against the lookup
+matched2 <- merge(unmatched, all_exact[, .(employer_clean, gvkey)],
+                  by = "employer_clean")
+cat("Step 2 matched rows:", format(nrow(matched2), big.mark = ","),
+    "| new gvkeys:", uniqueN(matched2$gvkey),
+    "| time:", round((proc.time() - t2)[3], 1), "s\n")
+
+rm(unmatched); gc()
+
+## ── Combine matches from both steps ──
+matched1[, employer_clean := employer_raw]
+combined <- rbindlist(list(
+  matched1[, .(cycle, bonica.cid, contributor.cfscore, gvkey)],
+  matched2[, .(cycle, bonica.cid, contributor.cfscore, gvkey)]
+))
+
+rm(matched1, matched2); gc()
+
+cat("Total matched rows:", format(nrow(combined), big.mark = ","), "\n")
+cat("Unique gvkeys:", uniqueN(combined$gvkey), "\n")
+cat("Unique donors:", format(uniqueN(combined$bonica.cid), big.mark = ","), "\n")
+
+## ══════════════════════════════════════════════════════════════
+## Aggregate to one row per gvkey * cycle
+## ══════════════════════════════════════════════════════════════
+cat("Aggregating...\n")
+emp_panel <- combined[, .(
+  emp_mean_cfscore   = mean(contributor.cfscore, na.rm = TRUE),   # mean employee ideology
+  emp_median_cfscore = median(contributor.cfscore, na.rm = TRUE), # median employee ideology
+  emp_sd_cfscore     = sd(contributor.cfscore, na.rm = TRUE),     # within-firm ideological dispersion
+  n_emp_donors       = uniqueN(bonica.cid),                       # unique employee donors
+  n_contributions    = .N                                          # total donation records
+), by = .(gvkey, cycle)]
+
+rm(combined); gc()
+
+## ── Save the panel for this cycle ──
+outfile <- paste0("employee_panel_", cycle_val, ".rdata")
+save(emp_panel, file = outfile)
+cat("\nSaved:", outfile, "\n")
+
+## ── Print summary diagnostics ──
+cat("\n=== Summary for cycle", cycle_val, "===\n")
+cat("Firms (gvkey):", nrow(emp_panel), "\n")
+cat("\nEmployee mean cfscore:\n"); print(summary(emp_panel$emp_mean_cfscore))
+cat("\nDonor count:\n"); print(summary(emp_panel$n_emp_donors))
+cat("\nFirms with >= 20 donors:", sum(emp_panel$n_emp_donors >= 20), "\n")
+cat("Firms with >= 50 donors:", sum(emp_panel$n_emp_donors >= 50), "\n")
+cat("Firms with >= 100 donors:", sum(emp_panel$n_emp_donors >= 100), "\n")
+
+total_time <- round((proc.time() - t0)[3], 1)
+cat("\nTotal time:", total_time, "seconds\n")
+cat("Done!\n")
+```
+
+\newpage
+
+# Section 2: WRDS Downloads -- Compustat and ExecuComp {#sec-wrds}
+
+These chunks download the two WRDS datasets used in the project.
+
+## 2.1 Compustat Fundamentals
+
+Downloads annual firm financials from `comp.funda`, computes all outcome
+variables (restructuring charges, layoffs, employee change) and lagged
+controls, winsorizes continuous variables at the 1st/99th percentiles,
+and saves as `compustat_outcomes.rdata`.
+
+```{r wrds-compustat, eval=FALSE}
+## ── Connect to WRDS via RPostgres ──
+library(RPostgres)
+wrds <- dbConnect(Postgres(),
+                  host = "wrds-pgdata.wharton.upenn.edu", port = 9737,
+                  dbname = "wrds", sslmode = "require",
+                  user = Sys.getenv("WRDS_USER"),
+                  password = Sys.getenv("WRDS_PW"))
+
+## ── Query: annual Compustat fundamentals, fyear >= 1999, positive assets ──
+## Restricts to industrial/standard/domestic/Canadian formats
+compustat <- as.data.table(dbGetQuery(wrds, "
+  SELECT gvkey, datadate, fyear, sich,
+         at, sale, revt, cogs, xsga, ebitda, ni, ib, oibdp,
+         spi, rcp, dp, xrd, capx, aqc, emp, csho, prcc_f,
+         dltt, dlc, ceq, txdb, itcb, pstkl, che, act, lct,
+         ppent, intan, gdwl, dvt
+  FROM comp.funda
+  WHERE fyear >= 1999
+    AND at > 0
+    AND indfmt = 'INDL' AND datafmt = 'STD'
+    AND popsrc = 'D' AND consol = 'C'
+"))
+
+dbDisconnect(wrds)
+setDT(compustat)
+cat("Compustat raw:", nrow(compustat), "rows,", uniqueN(compustat$gvkey), "firms\n")
+
+## ── Compute outcome and control variables ──
+## SIC-2 industry code (first 2 digits of historical SIC)
+compustat[, sic2 := floor(sich / 100)]
+
+## Exclude financials (SIC 60-69) and utilities (SIC 49)
+compustat[, exclude_industry := as.integer(sic2 %in% c(49, 60:69))]
+
+## PRIMARY DV: neg_spi_at = -SPI/AT  (positive = more restructuring charges)
+compustat[, neg_spi_at := -spi / at]
+
+## Employee-based outcomes
+compustat[, emp_change := (emp - shift(emp)) / shift(emp), by = gvkey]
+compustat[, layoff := as.integer(emp_change < -0.05)]
+
+## Restructuring charges / assets (alternative DV, low coverage)
+compustat[, rcp_at := rcp / at]
+
+## ── Control variables ──
+compustat[, size := log(at)]
+compustat[, roa := ib / at]
+compustat[, leverage := (dltt + dlc) / at]
+compustat[, tobinq := (at - ceq + csho * prcc_f) / at]
+compustat[, sale_growth := (sale - shift(sale)) / shift(sale), by = gvkey]
+compustat[, loss := as.integer(ni < 0)]
+compustat[, capx_at := capx / at]
+compustat[, rd_at := fifelse(is.na(xrd), 0, xrd / at)]
+compustat[, acquisition := as.integer(!is.na(aqc) & aqc > 0)]
+compustat[, emp_sale := emp / (sale / 1000)]  # employees per $M sales
+compustat[, sga_at := xsga / at]
+compustat[, cash_at := che / at]
+compustat[, oper_margin := oibdp / sale]
+compustat[oper_margin < -10, oper_margin := -10]  # cap extreme negatives
+compustat[, asset_growth := (at - shift(at)) / shift(at), by = gvkey]
+
+## Fix Inf values in growth variables
+compustat[is.infinite(sale_growth), sale_growth := NA]
+compustat[is.infinite(asset_growth), asset_growth := NA]
+
+## NBER recession indicator (fiscal years during NBER contractions)
+compustat[, nber_recession := as.integer(fyear %in% c(2001, 2008, 2009, 2020))]
+
+## ── Lag all controls by one year ──
+lag_vars <- c("size", "roa", "leverage", "tobinq", "sale_growth", "loss",
+              "capx_at", "rd_at", "acquisition", "emp_sale", "sga_at", "cash_at",
+              "oper_margin", "asset_growth", "neg_spi_at", "emp_change")
+setorder(compustat, gvkey, fyear)
+for (v in lag_vars) {
+  compustat[, paste0("lag_", v) := shift(get(v), 1), by = gvkey]
+}
+
+## ── Winsorize continuous variables at 1st / 99th percentiles ──
+winsorize <- function(x, probs = c(0.01, 0.99)) {
+  q <- quantile(x, probs, na.rm = TRUE)
+  x[x < q[1]] <- q[1]
+  x[x > q[2]] <- q[2]
+  x
+}
+
+win_vars <- c("neg_spi_at", "emp_change", "rcp_at",
+              "size", "roa", "leverage", "tobinq", "sale_growth",
+              "capx_at", "rd_at", "emp_sale", "sga_at", "cash_at", "oper_margin",
+              grep("^lag_", names(compustat), value = TRUE))
+for (v in intersect(win_vars, names(compustat))) {
+  if (is.numeric(compustat[[v]])) compustat[, (v) := winsorize(get(v))]
+}
+
+save(compustat, file = "compustat_outcomes.rdata")
+cat("Saved compustat_outcomes.rdata:", nrow(compustat), "rows,", ncol(compustat), "cols\n")
+```
+
+## 2.2 ExecuComp CEO Identification
+
+Downloads CEO identity (one row per CEO-year) from ExecuComp's annual
+compensation table, filtering on `ceoann = 'CEO'` and `year >= 2000`.
+
+```{r wrds-execucomp, eval=FALSE}
+library(RPostgres)
+wrds <- dbConnect(Postgres(),
+                  host = "wrds-pgdata.wharton.upenn.edu", port = 9737,
+                  dbname = "wrds", sslmode = "require",
+                  user = Sys.getenv("WRDS_USER"),
+                  password = Sys.getenv("WRDS_PW"))
+
+## Query: one row per CEO per firm per year
+execucomp_ceos <- as.data.table(dbGetQuery(wrds, "
+  SELECT gvkey, year, execid, exec_fullname
+  FROM comp_execucomp.anncomp
+  WHERE ceoann = 'CEO'
+    AND year >= 2000
+"))
+
+dbDisconnect(wrds)
+setDT(execucomp_ceos)
+cat("ExecuComp CEOs:", nrow(execucomp_ceos), "rows\n")
+cat("Unique gvkeys:", uniqueN(execucomp_ceos$gvkey), "\n")
+cat("Unique execids:", uniqueN(execucomp_ceos$execid), "\n")
+
+save(execucomp_ceos, file = "execucomp_ceos.rdata")
+```
+
+\newpage
+
+# Section 3: Employer Lookup Construction {#sec-employer}
+
+Builds the employer-name-to-Compustat-gvkey lookup table used by the
+cycle processor (Section 1). This maps the free-text
+`contributor.employer` field in DIME to standardized Compustat firm
+identifiers.
+
+The construction uses the full DIME contributor file
+(`dime_contributors_1979_2024.rdata`, 44 M rows).
+
+```{r employer-lookup, eval=FALSE}
+## ── Load full DIME contributor file ──
+library(data.table)
+load("dime_contributors_1979_2024.rdata")  # contribs (44.2M rows)
+setDT(contribs)
+
+## ── Filter to relevant individuals ──
+## Keep individuals with: last cycle >= 2000, non-missing cfscore, >= 2 distinct contributions
+contribs <- contribs[contributor.type == "I" &
+                       last_cycle_active >= 2000 &
+                       !is.na(contributor.cfscore) &
+                       num.distinct >= 2]
+cat("After filter:", nrow(contribs), "rows\n")
+
+## ── Standardize employer names ──
+contribs[, employer_clean := toupper(trimws(most.recent.contributor.employer))]
+
+## just get rid of this (self-employed, retired, or whatever!!)
+junk <- c("SELF", "SELF-EMPLOYED", "SELF EMPLOYED", "SELFEMPLOYED",
+          "RETIRED", "NONE", "N/A", "NA", "NOT EMPLOYED",
+          "HOMEMAKER", "HOME MAKER", "STUDENT", "UNEMPLOYED")
+contribs <- contribs[!employer_clean %in% junk & employer_clean != ""]
+
+## Remove corporate suffixes (same function as Section 1)
+suffixes <- c("\\s+INC\\.?$", "\\s+INCORPORATED$", "\\s+CORP\\.?$",
+              "\\s+CORPORATION$", "\\s+LLC$", "\\s+LLP$", "\\s+LP$",
+              "\\s+LTD\\.?$", "\\s+LIMITED$", "\\s+CO\\.?$",
+              "\\s+COMPANY$", "\\s+GROUP$", "\\s+HOLDINGS?$",
+              "\\s+ENTERPRISES?$", "\\s+INTERNATIONAL$",
+              "\\s+& CO\\.?$", "\\s+AND CO\\.?$",
+              ",\\s*INC\\.?$", ",\\s*LLC$", ",\\s*LTD\\.?$",
+              ",\\s*CORP\\.?$")
+for (suf in suffixes) contribs[, employer_clean := gsub(suf, "", employer_clean)]
+contribs[, employer_clean := gsub("\\s+", " ", trimws(employer_clean))]
+
+## Count unique donors per employer, keep those with >= 10
+emp_counts <- contribs[, .(n_donors = uniqueN(bonica.cid)), by = employer_clean]
+emp_counts <- emp_counts[n_donors >= 10]
+
+## Match to Compustat firm names (exact + manual aliases)
+## Load Compustat to get official company names
+load("compustat_outcomes.rdata")
+cs_names <- unique(compustat[, .(gvkey, conm)])
+cs_names[, conm_clean := toupper(trimws(conm))]
+for (suf in suffixes) cs_names[, conm_clean := gsub(suf, "", conm_clean)]
+cs_names[, conm_clean := gsub("\\s+", " ", trimws(conm_clean))]
+
+## Exact matches: employer_clean == conm_clean
+exact_matches <- merge(emp_counts, cs_names[, .(employer_clean = conm_clean, gvkey, conm)],
+                        by = "employer_clean")
+
+## Manual aliases for known name changes / variants
+manual_aliases <- data.table(
+  employer_clean = c(
+    "GOOGLE", "ALPHABET",
+    "FACEBOOK", "META", "META PLATFORMS",
+    "HEWLETT PACKARD", "HEWLETT-PACKARD",
+    "JPMORGAN CHASE", "JP MORGAN", "JP MORGAN CHASE", "JPMORGAN",
+    "CHASE MANHATTAN",
+    "GOLDMAN SACHS",
+    "MORGAN STANLEY",
+    "BANK OF AMERICA",
+    "MERRILL LYNCH",
+    "BEAR STEARNS",
+    "LEHMAN BROTHERS",
+    "COUNTRYWIDE", "COUNTRYWIDE FINANCIAL",
+    "CITIBANK", "CITICORP",
+    "PHILIP MORRIS", "ALTRIA", "ALTRIA GROUP",
+    "KRAFT FOODS", "KRAFT",
+    "TIME WARNER",
+    "WARNER BROS",
+    "RAYTHEON", "RAYTHEON TECHNOLOGIES",
+    "RTX",
+    "WORLDCOM", "MCI", "MCI WORLDCOM",
+    "LUCENT", "LUCENT TECHNOLOGIES",
+    "TRIBUNE", "TRIBUNE MEDIA",
+    "ANDERSEN CONSULTING", "ACCENTURE",
+    "WAL MART", "WAL-MART",
+    "SUNTRUST BANK", "SUNTRUST",
+    "UNITEDHEALTH", "UNITED HEALTH GROUP", "UNITED HEALTHCARE",
+    "ANHEUSER BUSCH", "ANHEUSER-BUSCH", "ANHEUSER BUSCH COS"
+  ),
+  gvkey = c(
+    "160329", "160329",
+    "170617", "170617", "170617",
+    "005606", "005606",
+    "002968", "002968", "002968", "002968",
+    "002968",
+    "114628",
+    "012124",
+    "007647",
+    "007267",
+    "011818",
+    "030128",
+    "003555", "003555",
+    "003243", "003243",
+    "008543", "008543", "008543",
+    "012978", "012978",
+    "025056",
+    "164296",
+    "008972", "010983",
+    "010983",
+    "143972", "143972", "143972",
+    "062599", "062599",
+    "010726", "010726",
+    "143357", "143357",
+    "011259", "011259",
+    "010187", "010187",
+    "010903", "010903", "010903",
+    "001663", "001663", "001663"
+  )
+)
+
+manual_aliases <- merge(manual_aliases, cs_names[, .(gvkey, conm)], by = "gvkey", all.x = TRUE)
+
+## Combine exact + manual into final lookup
+all_exact <- rbindlist(list(
+  exact_matches[, .(employer_clean, gvkey, conm)],
+  manual_aliases[, .(employer_clean, gvkey, conm)]
+), fill = TRUE)
+all_exact <- unique(all_exact, by = c("employer_clean", "gvkey"))
+
+cat("Final employer lookup:", nrow(all_exact), "rows\n")
+cat("Unique gvkeys:", uniqueN(all_exact$gvkey), "\n")
+
+save(all_exact, file = "employer_lookup_for_panel.rdata")
+cat("Saved: employer_lookup_for_panel.rdata\n")
+```
+
+\newpage
+
+# Section 4: CEO DIME Matching {#sec-ceo-match}
+
+Matches ExecuComp CEO names to DIME contributor records to obtain a
+lifetime CFscore for each CEO. The procedure:
+
+1.  Clean both name sets: uppercase, remove punctuation, strip suffixes
+    (Jr, Sr, II, III, MD, PhD, MBA, etc.).
+2.  Parse to `LASTNAME FIRSTNAME` format (DIME is "last, first";
+    ExecuComp is "first last").
+3.  Merge on the two-token name key via `data.table` join (fast --
+    seconds not hours).
+4.  Disambiguate multiple matches: prefer candidates whose DIME employer
+    matches the Compustat firm, then break ties by `num.distinct` (more
+    distinct contributions = more reliable score).
+
+Result: `ceo_dime_lookup.rdata` with 4,157 of 8,180 ExecuComp CEOs
+matched (50.8%).
+
+```{r ceo-match, eval=FALSE}
+library(data.table)
+setwd("/Users/homemac/Library/Mobile Documents/com~apple~CloudDocs/My Research/Accounting Research/Political_Accounting/Political Misalignment/Codes")
+
+## ── Name cleaning function ──
+## Uppercases, removes periods/commas, strips personal suffixes
+clean_name <- function(x) {
+  x <- toupper(x)
+  x <- gsub('[.,]', ' ', x)
+  x <- gsub('\\b(JR|SR|II|III|IV|V|MD|PHD|MBA|CFA|CPA|ESQ|BSC|DDS|DO)\\b', '', x)
+  x <- gsub('\\s+', ' ', trimws(x))
+  x
+}
+
+## ══════════════════════════════════════════════════════════════
+## Build DIME lookup table
+## ══════════════════════════════════════════════════════════════
+## dime_contribs_slim.rdata: pre-filtered DIME contributor table
+## Columns: bonica.cid, most.recent.contributor.name, contributor.cfscore,
+##          most.recent.contributor.employer, num.distinct
+load("dime_contribs_slim.rdata")  # loads `contribs`
+setDT(contribs)
+
+dime_names <- contribs[, .(bonica.cid,
+                           name = most.recent.contributor.name,
+                           cfscore = contributor.cfscore,
+                           employer = most.recent.contributor.employer,
+                           num_distinct = num.distinct)]
+rm(contribs); gc()
+
+## Clean DIME names and create a two-token key: "LASTNAME FIRSTNAME"
+## DIME format: "lastname, firstname [middle]" -> after clean: "LASTNAME FIRSTNAME MIDDLE"
+## We keep only the first two tokens
+dime_names[, name_clean := clean_name(name)]
+dime_names[, name_key := gsub(',', '', name_clean)]       # remove leftover commas
+dime_names[, name_key := gsub('\\s+', ' ', trimws(name_key))]
+dime_names[, name_key := sub('^(\\S+\\s+\\S+).*', '\\1', name_key)]  # first 2 tokens
+
+## ══════════════════════════════════════════════════════════════
+## Clean ExecuComp names into the same "LASTNAME FIRSTNAME" format
+## ══════════════════════════════════════════════════════════════
+load("execucomp_ceos.rdata")
+setDT(execucomp_ceos)
+execucomp_ceos[, execid := as.character(execid)]
+execucomp_ceos[, name_clean := clean_name(exec_fullname)]
+
+## ExecuComp format: "FIRSTNAME [MIDDLE] LASTNAME" -> reverse to "LASTNAME FIRSTNAME"
+name_parts <- strsplit(execucomp_ceos$name_clean, ' ')
+execucomp_ceos[, name_key := sapply(name_parts, function(p) {
+  if (length(p) >= 2) paste(p[length(p)], p[1]) else p[1]
+})]
+
+## ══════════════════════════════════════════════════════════════
+## Merge ExecuComp x DIME on name_key (cartesian join)
+## ══════════════════════════════════════════════════════════════
+exec_unique <- unique(execucomp_ceos[, .(execid, name_key, exec_fullname)])
+
+matches <- merge(execucomp_ceos[, .(execid, gvkey, year, name_key, exec_fullname)],
+                 dime_names[, .(bonica.cid, name_key, cfscore, employer, num_distinct)],
+                 by = 'name_key', allow.cartesian = TRUE)
+cat("Raw matches:", format(nrow(matches), big.mark = ","), "\n")
+cat("Unique execids matched:", uniqueN(matches$execid), "out of",
+    uniqueN(exec_unique$execid), "\n")
+
+## ══════════════════════════════════════════════════════════════
+## Disambiguate: prefer DIME employer matching the Compustat firm
+## ══════════════════════════════════════════════════════════════
+load("employer_lookup_for_panel.rdata")  # all_exact
+
+## Flag if the DIME contributor's employer name matches the Compustat firm
+matches <- merge(matches, all_exact[, .(gvkey, employer_clean)],
+                 by = 'gvkey', allow.cartesian = TRUE)
+matches[, dime_employer_clean := toupper(trimws(employer))]
+matches[, employer_match := !is.na(dime_employer_clean) & !is.na(employer_clean) &
+          (grepl(employer_clean, dime_employer_clean, fixed = TRUE) |
+           grepl(dime_employer_clean, employer_clean, fixed = TRUE))]
+
+## Pick best match per execid: employer match first, then highest num_distinct
+matches[, priority := ifelse(employer_match, 1L, 2L)]
+setorder(matches, execid, priority, -num_distinct)
+ceo_lookup <- unique(matches, by = 'execid')
+
+cat("Final CEO lookup:", nrow(ceo_lookup), "unique execids\n")
+cat("  With employer match:", sum(ceo_lookup$employer_match), "\n")
+cat("  Without (name only):", sum(!ceo_lookup$employer_match), "\n")
+
+## ── Save the slim lookup for use in panel assembly ──
+ceo_dime_lookup <- ceo_lookup[, .(execid, exec_fullname, bonica.cid,
+                                   ceo_cfscore = cfscore, num_distinct,
+                                   name_key, employer_match,
+                                   dime_employer = employer)]
+save(ceo_dime_lookup, file = "ceo_dime_lookup.rdata")
+cat("Saved: ceo_dime_lookup.rdata (", nrow(ceo_dime_lookup), "rows)\n")
+```
+
+\newpage
+
+# Section 5: Panel Stacking and Assembly {#sec-panel}
+
+Stacks all 13 cycle-level employee panels into a single firm-cycle
+panel, merges CEO identity from ExecuComp (with year-1 fallback for
+missing matches), attaches CEO CFscores from the DIME lookup, computes
+misalignment, adds company names, and filters to a quality sample (\>=
+20 employee donors).
+
+```{r stack-and-merge, eval=FALSE}
+library(data.table)
+setwd("/Users/homemac/Library/Mobile Documents/com~apple~CloudDocs/My Research/Accounting Research/Political_Accounting/Political Misalignment/Codes")
+
+## ══════════════════════════════════════════════════════════════
+## STEP 1: Stack all 13 employee panels (2000-2024)
+## ══════════════════════════════════════════════════════════════
+files <- sort(list.files(pattern = "^employee_panel_20[0-9]{2}\\.rdata$"))
+cat("Found", length(files), "panel files:", paste(files, collapse = ", "), "\n")
+
+panels <- list()
+for (f in files) {
+  env <- new.env()
+  load(f, envir = env)
+  obj_name <- ls(envir = env)[1]
+  panels[[f]] <- get(obj_name, envir = env)
+}
+panel <- rbindlist(panels, fill = TRUE)
+rm(panels); gc()
+
+cat("Stacked panel:", format(nrow(panel), big.mark = ","), "firm-cycles\n")
+cat("Unique firms:", uniqueN(panel$gvkey), "\n")
+cat("Cycles:", paste(sort(unique(panel$cycle)), collapse = ", "), "\n")
+
+## ══════════════════════════════════════════════════════════════
+## STEP 2: Merge CEO identity from ExecuComp
+## ══════════════════════════════════════════════════════════════
+load("execucomp_ceos.rdata")
+setDT(execucomp_ceos)
+ceo_slim <- unique(execucomp_ceos[, .(gvkey, year, execid, exec_fullname)])
+
+## Primary merge: election cycle year == ExecuComp year
+panel <- merge(panel, ceo_slim,
+               by.x = c("gvkey", "cycle"),
+               by.y = c("gvkey", "year"),
+               all.x = TRUE)
+cat("CEO identified (direct year match):", format(sum(!is.na(panel$execid)), big.mark=","),
+    "of", format(nrow(panel), big.mark=","), "\n")
+
+## Fallback: if no CEO in cycle year, try year - 1
+missing_idx <- which(is.na(panel$execid))
+cat("Missing CEO:", format(length(missing_idx), big.mark=","), "-- trying year-1 fallback\n")
+
+if (length(missing_idx) > 0) {
+  missing_dt <- panel[missing_idx, .(gvkey, cycle, row_idx = missing_idx)]
+  missing_dt[, year_m1 := cycle - 1L]
+
+  fallback <- merge(missing_dt, ceo_slim,
+                    by.x = c("gvkey", "year_m1"),
+                    by.y = c("gvkey", "year"),
+                    all.x = TRUE)
+  fallback <- fallback[!is.na(execid)]
+  fallback <- unique(fallback, by = "row_idx")  # one CEO per firm-cycle
+
+  if (nrow(fallback) > 0) {
+    panel[fallback$row_idx, `:=`(execid = fallback$execid,
+                                  exec_fullname = fallback$exec_fullname)]
+    cat("Fallback matched:", format(nrow(fallback), big.mark=","), "\n")
+  }
+}
+cat("Total CEO identified:", format(sum(!is.na(panel$execid)), big.mark=","),
+    "of", format(nrow(panel), big.mark=","), "\n")
+
+## ══════════════════════════════════════════════════════════════
+## STEP 3: Merge CEO CFscore from DIME lookup
+## ══════════════════════════════════════════════════════════════
+load("ceo_dime_lookup.rdata")
+setDT(ceo_dime_lookup)
+ceo_cf <- unique(ceo_dime_lookup[, .(execid, ceo_cfscore)], by = "execid")
+ceo_cf <- ceo_cf[!is.na(ceo_cfscore)]
+
+panel <- merge(panel, ceo_cf, by = "execid", all.x = TRUE)
+cat("Firm-cycles with CEO CFscore:", format(sum(!is.na(panel$ceo_cfscore)), big.mark=","), "\n")
+
+## ══════════════════════════════════════════════════════════════
+## STEP 4: Compute misalignment measures
+## ══════════════════════════════════════════════════════════════
+## misalign_abs:    absolute difference between CEO and employee mean ideology
+## misalign_signed: CEO minus employee mean (positive = CEO more conservative)
+panel[, misalign_abs := abs(ceo_cfscore - emp_mean_cfscore)]
+panel[, misalign_signed := ceo_cfscore - emp_mean_cfscore]
+
+## ══════════════════════════════════════════════════════════════
+## STEP 5: Add company names from employer lookup
+## ══════════════════════════════════════════════════════════════
+load("employer_lookup_for_panel.rdata")
+setDT(all_exact)
+firm_names <- unique(all_exact[, .(gvkey, conm)], by = "gvkey")
+panel <- merge(panel, firm_names, by = "gvkey", all.x = TRUE)
+
+## ══════════════════════════════════════════════════════════════
+## STEP 6: Create panel versions and save
+## ══════════════════════════════════════════════════════════════
+panel_complete <- panel[!is.na(misalign_abs)]       # non-missing misalignment
+panel_qual     <- panel_complete[n_emp_donors >= 20] # quality filter: >= 20 donors
+
+cat("\n--- Pipeline funnel ---\n")
+cat("Total firm-cycles (stacked):", format(nrow(panel), big.mark=","), "\n")
+cat("Computable misalignment:", format(nrow(panel_complete), big.mark=","), "\n")
+cat("Quality filtered (>=20 donors):", format(nrow(panel_qual), big.mark=","), "\n")
+cat("Unique firms (quality):", uniqueN(panel_qual$gvkey), "\n")
+
+save(panel, file = "panel_full.rdata")
+save(panel_complete, file = "panel_complete.rdata")
+save(panel_qual, file = "panel_qual.rdata")
+cat("Saved panel_full.rdata, panel_complete.rdata, panel_qual.rdata\n")
+```
+
+\newpage
+
+# Section 6: Regression Data Construction {#sec-regdata}
+
+Merges the quality-filtered misalignment panel with Compustat outcomes,
+then constructs all additional variables needed for the regressions.
+
+**Bug fixes integrated here** (from `fix_dupes4.R`, `fix_turnover2.R`,
+`fix_firstyear.R`):
+
+-   **Deduplication:** After the Compustat merge, some firm-years have
+    multiple CEO rows. We keep one row per `gvkey * fyear_lead`,
+    preferring the row with a non-missing `ceo_cfscore`.
+-   **CEO turnover:** Computed at the firm-year level by comparing the
+    set of CEO `execid`s across consecutive ExecuComp years (not
+    row-level shifts, which produced incorrect values when multiple CEOs
+    appear).
+-   **First-year CEO:** Defined as the first panel appearance of a given
+    `execid` at a given `gvkey` (by cycle order), not the ExecuComp
+    first year.
+
+```{r build-reg-data, eval=FALSE}
+library(data.table)
+setwd("/Users/homemac/Library/Mobile Documents/com~apple~CloudDocs/My Research/Accounting Research/Political_Accounting/Political Misalignment/Codes")
+
+## ══════════════════════════════════════════════════════════════
+## PART A: Merge quality panel with Compustat
+## ══════════════════════════════════════════════════════════════
+load("panel_qual.rdata")
+load("compustat_outcomes.rdata")
+setDT(panel_qual); setDT(compustat)
+
+## Lagged specification: misalignment at cycle t -> outcomes at fiscal year t+1
+panel_qual[, fyear_lead := cycle + 1L]
+
+reg_data <- merge(panel_qual, compustat,
+                  by.x = c("gvkey", "fyear_lead"),
+                  by.y = c("gvkey", "fyear"),
+                  all.x = TRUE)
+
+## Drop rows without Compustat match
+reg_data <- reg_data[!is.na(at)]
+cat("After Compustat merge:", nrow(reg_data), "rows\n")
+
+## Exclude financials (SIC 60-69) and utilities (SIC 49)
+reg_data <- reg_data[exclude_industry == 0 | is.na(exclude_industry)]
+reg_data <- reg_data[!is.na(neg_spi_at) | !is.na(emp_change)]  # need at least one DV
+cat("After industry exclusion:", nrow(reg_data), "rows\n")
+
+## ══════════════════════════════════════════════════════════════
+## PART B: Deduplicate (fix from fix_dupes4.R)
+## Some firm-years map to multiple CEO rows from ExecuComp.
+## Keep one row per gvkey * fyear_lead, preferring non-missing ceo_cfscore.
+## ══════════════════════════════════════════════════════════════
+reg_data[, has_cfs := as.integer(!is.na(ceo_cfscore))]
+setorder(reg_data, gvkey, fyear_lead, -has_cfs)
+reg_data <- reg_data[!duplicated(reg_data[, .(gvkey, fyear_lead)])]
+reg_data[, has_cfs := NULL]
+cat("After dedup:", nrow(reg_data), "rows\n")
+cat("gvkey+fyear dupes:", sum(duplicated(reg_data[, .(gvkey, fyear_lead)])), "\n")
+
+## ══════════════════════════════════════════════════════════════
+## PART C: Construct additional variables (from build_reg_data_v2.R)
+## ══════════════════════════════════════════════════════════════
+
+## ── Quadrant indicators ──
+## Classify each firm-cycle into one of four ideological configurations
+reg_data[, cross_ceo_right := as.integer(ceo_cfscore > 0 & emp_mean_cfscore < 0)]
+reg_data[, cross_ceo_left  := as.integer(ceo_cfscore < 0 & emp_mean_cfscore > 0)]
+reg_data[, same_side_right := as.integer(ceo_cfscore > emp_mean_cfscore &
+                                          cross_ceo_right == 0 & cross_ceo_left == 0)]
+reg_data[, same_side_left  := as.integer(ceo_cfscore < emp_mean_cfscore &
+                                          cross_ceo_right == 0 & cross_ceo_left == 0)]
+
+## Quadrant label (for diagnostics)
+reg_data[, quadrant := fcase(
+  cross_ceo_right == 1, "Cross: CEO Right / Emp Left",
+  cross_ceo_left == 1,  "Cross: CEO Left / Emp Right",
+  same_side_right == 1, "Same side: CEO more Right",
+  same_side_left == 1,  "Same side: CEO more Left",
+  default = "Exact tie or NA"
+)]
+
+## ── CEO absolute conservative indicator ──
+reg_data[, ceo_abs_conservative := as.integer(ceo_cfscore > 0)]
+
+## ── Log number of donors ──
+reg_data[, log_n_donors := log(n_emp_donors)]
+
+## ── SIC 2-digit industry code ──
+reg_data[, sic2 := floor(sich / 100)]
+## Fill missing sic2 from Compustat if needed
+if (sum(is.na(reg_data$sic2)) > 0) {
+  cs_sic <- compustat[!is.na(sich), .(sich_cs = floor(sich[.N] / 100)), by = gvkey]
+  reg_data <- merge(reg_data, cs_sic, by = "gvkey", all.x = TRUE)
+  reg_data[is.na(sic2) & !is.na(sich_cs), sic2 := sich_cs]
+  reg_data[, sich_cs := NULL]
+}
+
+## ── Donor coverage (employee donors / total employees in thousands) ──
+if ("emp" %in% names(reg_data)) {
+  reg_data[, donor_coverage := fifelse(is.na(emp) | emp == 0, NA_real_,
+                                        n_emp_donors / (emp * 1000))]
+}
+
+## ── Lagged misalignment from prior election cycle ──
+## Cycles are biennial, so shift(1) by gvkey gives the prior cycle (2 years back)
+setorder(reg_data, gvkey, cycle)
+reg_data[, misalign_abs_L2 := shift(misalign_abs, 1), by = gvkey]
+
+## ══════════════════════════════════════════════════════════════
+## PART D: CEO Turnover (fix from fix_turnover2.R)
+## Compute at firm-year level by comparing CEO sets across consecutive years
+## ══════════════════════════════════════════════════════════════
+load("execucomp_ceos.rdata")
+ec <- as.data.table(execucomp_ceos)
+ec[, execid := as.character(execid)]
+
+## For each gvkey-year, collect all CEO execids as a sorted string
+ceo_set <- ec[, .(ceo_ids = paste(sort(unique(execid)), collapse = ",")),
+              by = .(gvkey, year)]
+setorder(ceo_set, gvkey, year)
+ceo_set[, prev_ceo_ids := shift(ceo_ids, 1), by = gvkey]
+ceo_set[, prev_year := shift(year, 1), by = gvkey]
+
+## Turnover = CEO set changed from prior consecutive year
+ceo_set[, ceo_turnover := as.integer(prev_year == year - 1 & ceo_ids != prev_ceo_ids)]
+ceo_set[prev_year != year - 1 | is.na(prev_year), ceo_turnover := NA_integer_]
+
+turnover_dt <- ceo_set[, .(gvkey, fyear_lead = year, ceo_turnover)]
+reg_data[, execid := as.character(execid)]
+reg_data <- merge(reg_data, turnover_dt, by = c("gvkey", "fyear_lead"), all.x = TRUE)
+
+## ══════════════════════════════════════════════════════════════
+## PART E: First-year CEO (fix from fix_firstyear.R)
+## First panel appearance of this execid at this gvkey
+## ══════════════════════════════════════════════════════════════
+setorder(reg_data, gvkey, execid, cycle)
+reg_data[, first_year_ceo := as.integer(cycle == min(cycle)), by = .(gvkey, execid)]
+
+## ══════════════════════════════════════════════════════════════
+## PART F: Industry downturn measures (from run_industry_downturn.R)
+## ══════════════════════════════════════════════════════════════
+cs <- copy(compustat)
+cs <- cs[!sic2 %in% c(49, 60:69)]
+
+## Industry-level aggregates by sic2 x fyear
+ind <- cs[!is.na(sic2) & !is.na(fyear), .(
+  ind_sale_growth  = median(sale_growth, na.rm = TRUE),
+  ind_neg_spi      = median(neg_spi_at, na.rm = TRUE),
+  ind_layoff_rate  = mean(emp_change < -0.05, na.rm = TRUE),  # fraction of firms with layoffs
+  n_firms          = .N
+), by = .(sic2, fyear)]
+
+ind[, ind_downturn := as.integer(ind_sale_growth < 0)]
+ind <- ind[!is.na(ind_sale_growth)]
+
+## Merge to reg_data
+reg_data <- merge(reg_data,
+                  ind[, .(sic2, fyear_lead = fyear, ind_sale_growth,
+                          ind_neg_spi, ind_downturn, ind_layoff_rate)],
+                  by = c("sic2", "fyear_lead"), all.x = TRUE)
+rm(cs, ind); gc()
+
+## ══════════════════════════════════════════════════════════════
+## Save final regression data
+## ══════════════════════════════════════════════════════════════
+cat("\n=== FINAL reg_data ===\n")
+cat("Dimensions:", nrow(reg_data), "rows x", ncol(reg_data), "cols\n")
+cat("Unique firms:", uniqueN(reg_data$gvkey), "\n")
+cat("gvkey+fyear dupes:", sum(duplicated(reg_data[, .(gvkey, fyear_lead)])), "\n")
+cat("CEO turnover:\n"); print(table(reg_data$ceo_turnover, useNA = "ifany"))
+cat("First year CEO:\n"); print(table(reg_data$first_year_ceo, useNA = "ifany"))
+
+save(reg_data, file = "reg_data_v3.rdata")
+cat("Saved reg_data_v3.rdata\n")
+```

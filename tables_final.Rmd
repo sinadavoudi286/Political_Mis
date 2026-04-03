@@ -1,0 +1,672 @@
+---
+title: "Tables --- CEO--Employee Political Misalignment and Layoffs"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    keep_tex: true
+geometry: margin=0.8in
+fontsize: 10pt
+header-includes:
+  - \usepackage{booktabs}
+  - \usepackage{float}
+  - \floatplacement{table}{H}
+  - \usepackage{caption}
+  - \captionsetup{font=small, labelfont=bf, skip=5pt}
+  - \usepackage{threeparttable}
+  - \usepackage{setspace}
+  - \singlespacing
+  - \pagestyle{plain}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(data.table)
+library(fixest)
+library(kableExtra)
+setFixest_notes(FALSE)
+
+# ── Load and prepare data ──
+load("reg_data_v3.rdata")
+if (!"fyear" %in% names(reg_data)) setnames(reg_data, "fyear_lead", "fyear")
+dt <- reg_data[!sic2 %in% c(49, 60:69)]
+dt[, recession := nber_recession]
+dt[, lag_aqc_indicator := lag_acquisition]
+dt[, ceo_right := pmax(misalign_signed, 0)]
+dt[, ceo_left  := pmax(-misalign_signed, 0)]
+
+ctrl <- "lag_size + lag_roa + lag_leverage + lag_tobinq + lag_sale_growth + lag_loss + lag_capx_at + lag_rd_at + lag_aqc_indicator"
+
+# ── Helper functions ──
+fmt  <- function(x, d = 3) formatC(x, format = "f", digits = d, big.mark = ",")
+fmt0 <- function(x) formatC(x, format = "d", big.mark = ",")
+fmt4 <- function(x) formatC(x, format = "f", digits = 4)
+
+stars <- function(p) {
+  ifelse(is.na(p), "",
+    ifelse(p < 0.01, "***",
+      ifelse(p < 0.05, "**",
+        ifelse(p < 0.10, "*", ""))))
+}
+
+get_cp <- function(mod, var) {
+  b <- coef(mod); V <- vcov(mod)
+  idx <- match(var, names(b))
+  if (is.na(idx)) return(c(NA_real_, NA_real_, NA_real_))
+  se <- sqrt(V[idx, idx])
+  p <- 2 * pt(abs(b[idx] / se), df = degrees_freedom(mod, "t"), lower.tail = FALSE)
+  unname(c(b[idx], se, p))
+}
+
+net_eff <- function(mod, v1, v2, scale = 1) {
+  b <- coef(mod); V <- vcov(mod)
+  i1 <- match(v1, names(b)); i2 <- match(v2, names(b))
+  if (is.na(i1) || is.na(i2)) return(c(NA_real_, NA_real_, NA_real_))
+  net <- b[i1] + b[i2] * scale
+  se <- sqrt(V[i1, i1] + scale^2 * V[i2, i2] + 2 * scale * V[i1, i2])
+  p <- 2 * pt(abs(net / se), df = degrees_freedom(mod, "t"), lower.tail = FALSE)
+  unname(c(net, se, p))
+}
+
+# make_row: handles any number of models (including 1)
+get_r2 <- function(mod) {
+  wr2 <- fitstat(mod, "wr2")[[1]]
+  if (is.na(wr2)) return(fitstat(mod, "r2")[[1]])
+  return(wr2)
+}
+
+make_row <- function(var, label, mods) {
+  coefs <- sapply(mods, function(m) {
+    r <- get_cp(m, var)
+    if (is.na(r[1])) return(c("", ""))
+    c(paste0(fmt4(r[1]), stars(r[3])), paste0("(", fmt4(r[2]), ")"))
+  })
+  if (!is.matrix(coefs)) coefs <- matrix(coefs, nrow = 2, ncol = length(mods))
+  row1 <- c(label, coefs[1, ])
+  row2 <- c("", coefs[2, ])
+  rbind(row1, row2)
+}
+```
+
+```{r table1}
+# ══════════════════════════════════════════════════════════════
+# TABLE 1: SAMPLE CONSTRUCTION
+# ══════════════════════════════════════════════════════════════
+load("panel_full.rdata")
+pf <- panel
+load("panel_complete.rdata")
+pc <- panel_complete
+load("panel_qual.rdata")
+pq <- panel_qual
+
+dt_lay <- dt[!is.na(layoff)]
+
+samp <- data.frame(
+  Step = 1:6,
+  Description = c(
+    "All 13 cycle panels stacked (2000--2024)",
+    "Non-missing CEO and employee ideology",
+    "At least 20 employee donors per firm-cycle",
+    "Merged with Compustat outcomes",
+    "Excl. financials (SIC 60--67) and utilities (SIC 49)",
+    "Non-missing layoff dependent variable"
+  ),
+  FC = c(fmt0(nrow(pf)), fmt0(nrow(pc)), fmt0(nrow(pq)),
+         fmt0(nrow(reg_data)), fmt0(nrow(dt)), fmt0(nrow(dt_lay))),
+  UF = c(fmt0(uniqueN(pf$gvkey)), fmt0(uniqueN(pc$gvkey)),
+         fmt0(uniqueN(pq$gvkey)), fmt0(uniqueN(reg_data$gvkey)),
+         fmt0(uniqueN(dt$gvkey)), fmt0(uniqueN(dt_lay$gvkey))),
+  stringsAsFactors = FALSE
+)
+
+kbl(samp, booktabs = TRUE, align = c("c","l","r","r"),
+    caption = "Sample Construction",
+    col.names = c("Step","Description","Firm-Cycles","Unique Firms")) %>%
+  kable_styling(latex_options = c("hold_position"), font_size = 9,
+                full_width = FALSE, position = "center") %>%
+  footnote(
+    general = "The sample is a biennial panel covering 13 election cycles (2000--2024). CEO ideology is a lifetime DIME CFscore matched from ExecuComp to DIME contributor records. Employee ideology is the mean CFscore of employee political donors per firm-cycle. Financials = SIC 6000--6799; Utilities = SIC 4900--4999.",
+    general_title = "Note: ",
+    footnote_as_chunk = TRUE,
+    threeparttable = TRUE
+  )
+
+rm(pf, pc, pq, panel, panel_complete, panel_qual)
+```
+
+\newpage
+
+```{r table2}
+# ══════════════════════════════════════════════════════════════
+# TABLE 2: DESCRIPTIVE STATISTICS
+# ══════════════════════════════════════════════════════════════
+desc_row <- function(label, x) {
+  data.frame(
+    Variable = label,
+    N = fmt0(sum(!is.na(x))),
+    Mean = fmt(mean(x, na.rm = TRUE)),
+    SD = fmt(sd(x, na.rm = TRUE)),
+    P25 = fmt(as.numeric(quantile(x, 0.25, na.rm = TRUE))),
+    Median = fmt(median(x, na.rm = TRUE)),
+    P75 = fmt(as.numeric(quantile(x, 0.75, na.rm = TRUE))),
+    stringsAsFactors = FALSE
+  )
+}
+
+panA <- rbind(
+  desc_row("|Misalignment|", dt$misalign_abs),
+  desc_row("Signed Misalignment", dt$misalign_signed),
+  desc_row("CEO CFscore", dt$ceo_cfscore),
+  desc_row("Employee Mean CFscore", dt$emp_mean_cfscore),
+  desc_row("Employee CFscore SD", dt$emp_sd_cfscore),
+  desc_row("No. Employee Donors", dt$n_emp_donors),
+  desc_row("Donor Coverage", dt$donor_coverage)
+)
+panB <- rbind(
+  desc_row("Layoff Indicator", dt$layoff),
+  desc_row("Employee Change", dt$emp_change),
+  desc_row("Restructuring Charges (neg SPI/AT)", dt$neg_spi_at)
+)
+panC <- rbind(
+  desc_row("Industry Peer Layoff Rate", dt$ind_layoff_rate),
+  desc_row("Industry Downturn", dt$ind_downturn),
+  desc_row("NBER Recession", dt$recession)
+)
+panD <- rbind(
+  desc_row("Firm Size (log assets)", dt$lag_size),
+  desc_row("ROA", dt$lag_roa),
+  desc_row("Leverage", dt$lag_leverage),
+  desc_row("Tobin's Q", dt$lag_tobinq),
+  desc_row("Sales Growth", dt$lag_sale_growth),
+  desc_row("Loss Indicator", dt$lag_loss),
+  desc_row("Capex / Assets", dt$lag_capx_at),
+  desc_row("R&D / Assets", dt$lag_rd_at),
+  desc_row("Acquisition Indicator", dt$lag_aqc_indicator)
+)
+
+all_desc <- rbind(panA, panB, panC, panD)
+
+kbl(all_desc, booktabs = TRUE, align = c("l", rep("r", 6)),
+    caption = "Descriptive Statistics",
+    col.names = c("Variable","N","Mean","SD","P25","Median","P75")) %>%
+  kable_styling(latex_options = c("hold_position"), font_size = 9,
+                full_width = FALSE, position = "center") %>%
+  pack_rows("Panel A: Ideology and Misalignment", 1, nrow(panA), bold = TRUE) %>%
+  pack_rows("Panel B: Outcomes", nrow(panA)+1, nrow(panA)+nrow(panB), bold = TRUE) %>%
+  pack_rows("Panel C: Moderators", nrow(panA)+nrow(panB)+1,
+            nrow(panA)+nrow(panB)+nrow(panC), bold = TRUE) %>%
+  pack_rows("Panel D: Lagged Controls", nrow(panA)+nrow(panB)+nrow(panC)+1,
+            nrow(all_desc), bold = TRUE) %>%
+  footnote(
+    general = paste0("Sample: ", fmt0(nrow(dt)), " firm-cycle observations (",
+                     fmt0(uniqueN(dt$gvkey)),
+                     " firms). Financials and utilities excluded. All controls are lagged one period. Layoff = 1 if employee change < -5 percent. Donor coverage = no. employee donors / total employees."),
+    general_title = "Note: ",
+    footnote_as_chunk = TRUE,
+    threeparttable = TRUE
+  )
+```
+
+\newpage
+
+```{r table3}
+# ══════════════════════════════════════════════════════════════
+# TABLE 3: BASELINE — MISALIGNMENT AND LAYOFFS
+# ══════════════════════════════════════════════════════════════
+# (1) OLS, no FE
+m3_1 <- feols(as.formula(paste0("layoff ~ misalign_abs + ", ctrl)),
+              data = dt, cluster = ~gvkey)
+# (2) Firm FE only
+m3_2 <- feols(as.formula(paste0("layoff ~ misalign_abs + ", ctrl, " | gvkey")),
+              data = dt, cluster = ~gvkey)
+# (3) Firm + Year FE
+m3_3 <- feols(as.formula(paste0("layoff ~ misalign_abs + ", ctrl, " | gvkey + fyear")),
+              data = dt, cluster = ~gvkey)
+# (4) Firm + Year FE + additional controls
+m3_4 <- feols(as.formula(paste0(
+  "layoff ~ misalign_abs + emp_mean_cfscore + emp_sd_cfscore + ",
+  "ceo_turnover + first_year_ceo + log_n_donors + ", ctrl, " | gvkey + fyear")),
+  data = dt, cluster = ~gvkey)
+
+vars_t3 <- c("misalign_abs", "emp_mean_cfscore", "emp_sd_cfscore",
+             "ceo_turnover", "first_year_ceo", "log_n_donors",
+             "lag_size", "lag_roa", "lag_leverage", "lag_tobinq",
+             "lag_sale_growth", "lag_loss", "lag_capx_at", "lag_rd_at",
+             "lag_aqc_indicator")
+labels_t3 <- c("|Misalignment|", "Employee Mean CFscore", "Employee CFscore SD",
+               "CEO Turnover", "First-Year CEO", "Log(No. Donors)",
+               "Firm Size", "ROA", "Leverage", "Tobin's Q",
+               "Sales Growth", "Loss", "Capex/Assets", "R&D/Assets", "Acquisition")
+
+mods_t3 <- list(m3_1, m3_2, m3_3, m3_4)
+
+rows_t3 <- do.call(rbind, lapply(seq_along(vars_t3), function(i) {
+  make_row(vars_t3[i], labels_t3[i], mods_t3)
+}))
+
+fe_row <- c("Fixed Effects", "None", "Firm", "Firm + Year", "Firm + Year")
+cl_row <- c("Cluster", rep("Firm", 4))
+n_row <- c("Observations", sapply(mods_t3, function(m) fmt0(m$nobs)))
+r2_row <- c("R-squared", sapply(mods_t3, function(m) fmt(get_r2(m), 3)))
+
+tab3 <- as.data.frame(rbind(rows_t3, fe_row, cl_row, n_row, r2_row),
+                       stringsAsFactors = FALSE)
+names(tab3) <- c("", "(1)", "(2)", "(3)", "(4)")
+
+kbl(tab3, booktabs = TRUE, align = c("l", rep("c", 4)),
+    caption = "Baseline: Misalignment and Layoffs",
+    row.names = FALSE) %>%
+  kable_styling(latex_options = c("hold_position"), font_size = 8,
+                full_width = FALSE, position = "center") %>%
+  row_spec(nrow(rows_t3), hline_after = TRUE) %>%
+  footnote(
+    general = "Dependent variable: Layoff indicator (= 1 if employee change < -5 percent). Column (1) is pooled OLS. Column (2) adds firm fixed effects. Column (3) adds year fixed effects. Column (4) adds employee ideology, CEO turnover, and donor count controls. Standard errors clustered by firm in all columns. ***, **, * denote significance at the 1, 5, and 10 percent levels.",
+    general_title = "Note: ",
+    footnote_as_chunk = TRUE,
+    threeparttable = TRUE
+  )
+```
+
+\newpage
+
+```{r table4}
+# ══════════════════════════════════════════════════════════════
+# TABLE 4: PEER LAYOFF MODERATION (MAIN RESULT)
+# ══════════════════════════════════════════════════════════════
+# KEY RULE: Include ind_layoff_rate main effect only when NO year FE.
+#           With year FE, year FE absorb temporal variation so
+#           the main effect is not needed (and partially redundant).
+
+# (1) OLS, no FE — WITH ind_layoff_rate main effect
+m4_1 <- feols(as.formula(paste0(
+  "layoff ~ misalign_abs + ind_layoff_rate + misalign_abs:ind_layoff_rate + ", ctrl)),
+  data = dt, cluster = ~gvkey)
+
+# (2) Firm FE only — WITH ind_layoff_rate main effect
+m4_2 <- feols(as.formula(paste0(
+  "layoff ~ misalign_abs + ind_layoff_rate + misalign_abs:ind_layoff_rate + ", ctrl,
+  " | gvkey")),
+  data = dt, cluster = ~gvkey)
+
+# (3) Firm + Year FE — WITHOUT ind_layoff_rate main effect
+m4_3 <- feols(as.formula(paste0(
+  "layoff ~ misalign_abs + misalign_abs:ind_layoff_rate + ", ctrl,
+  " | gvkey + fyear")),
+  data = dt, cluster = ~gvkey)
+
+# (4) Firm + Year FE + employee ideology — WITHOUT ind_layoff_rate
+m4_4 <- feols(as.formula(paste0(
+  "layoff ~ misalign_abs + misalign_abs:ind_layoff_rate + ",
+  "emp_mean_cfscore + emp_sd_cfscore + ", ctrl,
+  " | gvkey + fyear")),
+  data = dt, cluster = ~gvkey)
+
+# (5) Firm + Year FE + CEO turnover — WITHOUT ind_layoff_rate
+m4_5 <- feols(as.formula(paste0(
+  "layoff ~ misalign_abs + misalign_abs:ind_layoff_rate + ",
+  "ceo_turnover + first_year_ceo + ", ctrl,
+  " | gvkey + fyear")),
+  data = dt, cluster = ~gvkey)
+
+mods_t4 <- list(m4_1, m4_2, m4_3, m4_4, m4_5)
+
+# Variables to show
+vars_t4 <- c("misalign_abs", "ind_layoff_rate", "misalign_abs:ind_layoff_rate",
+             "emp_mean_cfscore", "emp_sd_cfscore", "ceo_turnover", "first_year_ceo",
+             "lag_size", "lag_roa", "lag_leverage", "lag_tobinq",
+             "lag_sale_growth", "lag_loss", "lag_capx_at", "lag_rd_at",
+             "lag_aqc_indicator")
+labels_t4 <- c("|Misalignment|", "Peer Layoff Rate",
+               paste0("|Misalignment| \u00d7 Peer Layoff"),
+               "Employee Mean CFscore", "Employee CFscore SD",
+               "CEO Turnover", "First-Year CEO",
+               "Firm Size", "ROA", "Leverage", "Tobin's Q",
+               "Sales Growth", "Loss", "Capex/Assets", "R&D/Assets", "Acquisition")
+
+rows_t4 <- do.call(rbind, lapply(seq_along(vars_t4), function(i) {
+  make_row(vars_t4[i], labels_t4[i], mods_t4)
+}))
+
+fe_row4 <- c("Fixed Effects", "None", "Firm", "Firm + Year",
+             "Firm + Year", "Firm + Year")
+cl_row4 <- c("Cluster", rep("Firm", 5))
+n_row4 <- c("Observations", sapply(mods_t4, function(m) fmt0(m$nobs)))
+r2_row4 <- c("R-squared", sapply(mods_t4, function(m) fmt(get_r2(m), 3)))
+
+tab4 <- as.data.frame(rbind(rows_t4, fe_row4, cl_row4, n_row4, r2_row4),
+                       stringsAsFactors = FALSE)
+names(tab4) <- c("", "(1)", "(2)", "(3)", "(4)", "(5)")
+
+kbl(tab4, booktabs = TRUE, align = c("l", rep("c", 5)),
+    caption = "Peer Layoff Moderation of Misalignment Effect on Layoffs",
+    row.names = FALSE) %>%
+  kable_styling(latex_options = c("hold_position","scale_down"), font_size = 8,
+                full_width = FALSE, position = "center") %>%
+  row_spec(nrow(rows_t4), hline_after = TRUE) %>%
+  footnote(
+    general = paste0(
+      "Dependent variable: Layoff indicator. Peer Layoff Rate is the leave-one-out share of firms in the same 2-digit SIC industry reporting layoffs. ",
+      "Columns (1)--(2) include the Peer Layoff Rate main effect because they lack year fixed effects. ",
+      "Columns (3)--(5) omit the main effect because year FE absorb aggregate temporal variation. ",
+      "Standard errors clustered by firm. ***, **, * denote significance at the 1, 5, and 10 percent levels."),
+    general_title = "Note: ",
+    footnote_as_chunk = TRUE,
+    threeparttable = TRUE
+  )
+```
+
+```{r table4-net}
+# ── Net effects at percentiles (from Column 3: firm + year FE) ──
+pcts <- c(0.10, 0.25, 0.50, 0.75, 0.90)
+plr_vals <- quantile(dt$ind_layoff_rate, pcts, na.rm = TRUE)
+
+int_var <- "misalign_abs:ind_layoff_rate"
+net_rows <- lapply(seq_along(pcts), function(i) {
+  ne <- net_eff(m4_3, "misalign_abs", int_var, plr_vals[i])
+  data.frame(
+    Percentile = paste0("p", pcts[i]*100),
+    PLR = fmt(plr_vals[i]),
+    NetEff = paste0(fmt4(ne[1]), stars(ne[3])),
+    SE = fmt4(ne[2]),
+    pval = fmt4(ne[3]),
+    check.names = FALSE, stringsAsFactors = FALSE
+  )
+})
+net_df <- do.call(rbind, net_rows)
+
+b_base <- coef(m4_3)["misalign_abs"]
+b_int  <- coef(m4_3)[int_var]
+crossover <- -b_base / b_int
+
+kbl(net_df, booktabs = TRUE, align = c("c","r","r","r","r"),
+    caption = "Net Effect of Misalignment at Percentiles of Peer Layoff Rate (from Column 3)",
+    row.names = FALSE,
+    col.names = c("Percentile", "Peer Layoff Rate", "Net Effect", "SE", "p-value")) %>%
+  kable_styling(latex_options = c("hold_position"), font_size = 9,
+                full_width = FALSE, position = "center") %>%
+  footnote(
+    general = paste0(
+      "Net effect = coef(|Misalignment|) + coef(interaction) x Peer Layoff Rate. ",
+      "Crossover point (net effect = 0) at peer layoff rate = ", fmt(crossover), ". ",
+      "***, **, * denote significance at the 1, 5, and 10 percent levels."),
+    general_title = "Note: ",
+    footnote_as_chunk = TRUE,
+    threeparttable = TRUE
+  )
+```
+
+\newpage
+
+```{r table5}
+# ══════════════════════════════════════════════════════════════
+# TABLE 5: DONOR THRESHOLD SENSITIVITY
+# ══════════════════════════════════════════════════════════════
+# Specification: Table 4 Column (3) — firm + year FE, no standalone ind_layoff_rate
+thresholds <- c(20, 30, 50, 100)
+f_sens <- paste0("layoff ~ misalign_abs + misalign_abs:ind_layoff_rate + ", ctrl,
+                 " | gvkey + fyear")
+
+thresh_rows <- lapply(thresholds, function(thr) {
+  dts <- reg_data[!sic2 %in% c(49, 60:69) & n_emp_donors >= thr]
+  dts[, lag_aqc_indicator := lag_acquisition]
+  m <- feols(as.formula(f_sens), data = dts, cluster = ~gvkey)
+
+  r_base <- get_cp(m, "misalign_abs")
+  r_int  <- get_cp(m, "misalign_abs:ind_layoff_rate")
+
+  data.frame(
+    Threshold = paste0(thr, "+"),
+    N = fmt0(m$nobs),
+    Firms = fmt0(uniqueN(dts[!is.na(layoff)]$gvkey)),
+    BaseCoef = paste0(fmt4(r_base[1]), stars(r_base[3])),
+    BaseSE = fmt4(r_base[2]),
+    IntCoef = paste0(fmt4(r_int[1]), stars(r_int[3])),
+    IntSE = fmt4(r_int[2]),
+    stringsAsFactors = FALSE
+  )
+})
+thresh_df <- do.call(rbind, thresh_rows)
+
+kbl(thresh_df, booktabs = TRUE, align = c("l","r","r","r","r","r","r"),
+    caption = "Donor Threshold Sensitivity",
+    row.names = FALSE,
+    col.names = c("Threshold","N","Firms","Base Coef","Base SE",
+                  "Int. Coef","Int. SE")) %>%
+  kable_styling(latex_options = c("hold_position"), font_size = 9,
+                full_width = FALSE, position = "center") %>%
+  footnote(
+    general = paste0(
+      "Each row re-estimates the specification from Table 4, Column (3) on the subsample ",
+      "with at least the indicated number of employee donors. ",
+      "Base Coef is the |Misalignment| coefficient; Int. Coef is the interaction with Peer Layoff Rate. ",
+      "All models include firm + year FE, full controls, and firm-clustered SEs. ",
+      "***, **, * denote significance at the 1, 5, and 10 percent levels."),
+    general_title = "Note: ",
+    footnote_as_chunk = TRUE,
+    threeparttable = TRUE
+  )
+```
+
+\newpage
+
+```{r table6}
+# ══════════════════════════════════════════════════════════════
+# TABLE 6: CEO IDEOLOGY LEVEL TEST
+# ══════════════════════════════════════════════════════════════
+# (1) Without CEO level
+m6_1 <- feols(as.formula(paste0(
+  "layoff ~ misalign_abs + misalign_abs:ind_layoff_rate + ", ctrl,
+  " | gvkey + fyear")),
+  data = dt, cluster = ~gvkey)
+
+# (2) With CEO CFscore
+m6_2 <- feols(as.formula(paste0(
+  "layoff ~ misalign_abs + ceo_cfscore + misalign_abs:ind_layoff_rate + ", ctrl,
+  " | gvkey + fyear")),
+  data = dt, cluster = ~gvkey)
+
+vars_t6 <- c("misalign_abs", "ceo_cfscore", "misalign_abs:ind_layoff_rate")
+labels_t6 <- c("|Misalignment|", "CEO CFscore",
+               paste0("|Misalignment| \u00d7 Peer Layoff"))
+
+mods_t6 <- list(m6_1, m6_2)
+
+rows_t6 <- do.call(rbind, lapply(seq_along(vars_t6), function(i) {
+  make_row(vars_t6[i], labels_t6[i], mods_t6)
+}))
+
+ctrl_row6 <- c("Controls", rep("Yes", 2))
+fe_row6 <- c("Firm + Year FE", rep("Yes", 2))
+cl_row6 <- c("Cluster", rep("Firm", 2))
+n_row6 <- c("Observations", sapply(mods_t6, function(m) fmt0(m$nobs)))
+r2_row6 <- c("R-squared", sapply(mods_t6, function(m) fmt(get_r2(m), 3)))
+
+tab6 <- as.data.frame(rbind(rows_t6, ctrl_row6, fe_row6, cl_row6, n_row6, r2_row6),
+                       stringsAsFactors = FALSE)
+names(tab6) <- c("", "(1)", "(2)")
+
+ceo_p <- get_cp(m6_2, "ceo_cfscore")[3]
+
+kbl(tab6, booktabs = TRUE, align = c("l", rep("c", 2)),
+    caption = "CEO Ideology Level Test",
+    row.names = FALSE) %>%
+  kable_styling(latex_options = c("hold_position"), font_size = 9,
+                full_width = FALSE, position = "center") %>%
+  row_spec(nrow(rows_t6), hline_after = TRUE) %>%
+  footnote(
+    general = paste0(
+      "Dependent variable: Layoff indicator. Column (2) adds CEO CFscore as a direct control. ",
+      "The misalignment interaction remains stable while CEO CFscore is insignificant ",
+      "(p = ", fmt(ceo_p, 3), "), indicating that the ideological gap---not the CEO's ideology level---drives the effect. ",
+      "No standalone Peer Layoff Rate main effect is included because year FE absorb temporal variation. ",
+      "***, **, * denote significance at the 1, 5, and 10 percent levels."),
+    general_title = "Note: ",
+    footnote_as_chunk = TRUE,
+    threeparttable = TRUE
+  )
+```
+
+\newpage
+
+```{r table7}
+# ══════════════════════════════════════════════════════════════
+# TABLE 7: ASYMMETRY TEST
+# ══════════════════════════════════════════════════════════════
+# No standalone ind_layoff_rate — year FE absorb it
+m7 <- feols(as.formula(paste0(
+  "layoff ~ ceo_right + ceo_left + ",
+  "ceo_right:ind_layoff_rate + ceo_left:ind_layoff_rate + ", ctrl,
+  " | gvkey + fyear")),
+  data = dt, cluster = ~gvkey)
+
+vars_t7 <- c("ceo_right", "ceo_left",
+             "ceo_right:ind_layoff_rate", "ceo_left:ind_layoff_rate",
+             "lag_size", "lag_roa", "lag_leverage", "lag_tobinq",
+             "lag_sale_growth", "lag_loss", "lag_capx_at", "lag_rd_at",
+             "lag_aqc_indicator")
+labels_t7 <- c("CEO More Conservative", "CEO More Liberal",
+               paste0("CEO More Cons. \u00d7 Peer Layoff"),
+               paste0("CEO More Lib. \u00d7 Peer Layoff"),
+               "Firm Size", "ROA", "Leverage", "Tobin's Q",
+               "Sales Growth", "Loss", "Capex/Assets", "R&D/Assets", "Acquisition")
+
+rows_t7 <- do.call(rbind, lapply(seq_along(vars_t7), function(i) {
+  make_row(vars_t7[i], labels_t7[i], list(m7))
+}))
+
+fe_row7 <- c("Firm + Year FE", "Yes")
+cl_row7 <- c("Cluster", "Firm")
+n_row7 <- c("Observations", fmt0(m7$nobs))
+r2_row7 <- c("R-squared", fmt(get_r2(m7), 3))
+
+tab7 <- as.data.frame(rbind(rows_t7, fe_row7, cl_row7, n_row7, r2_row7),
+                       stringsAsFactors = FALSE)
+names(tab7) <- c("", "(1)")
+
+# Wald test: H0: coef(ceo_right:ind_layoff_rate) == coef(ceo_left:ind_layoff_rate)
+bv <- coef(m7); Vv <- vcov(m7)
+i_r <- match("ceo_right:ind_layoff_rate", names(bv))
+i_l <- match("ceo_left:ind_layoff_rate", names(bv))
+diff_b <- bv[i_r] - bv[i_l]
+diff_se <- sqrt(Vv[i_r, i_r] + Vv[i_l, i_l] - 2 * Vv[i_r, i_l])
+diff_p <- 2 * pt(abs(diff_b / diff_se), df = degrees_freedom(m7, "t"), lower.tail = FALSE)
+
+kbl(tab7, booktabs = TRUE, align = c("l", "c"),
+    caption = "Asymmetry Test: Conservative vs. Liberal CEO Misalignment",
+    row.names = FALSE) %>%
+  kable_styling(latex_options = c("hold_position"), font_size = 9,
+                full_width = FALSE, position = "center") %>%
+  row_spec(nrow(rows_t7), hline_after = TRUE) %>%
+  footnote(
+    general = paste0(
+      "Dependent variable: Layoff indicator. ",
+      "CEO More Conservative = max(signed misalignment, 0); ",
+      "CEO More Liberal = max(-signed misalignment, 0). ",
+      "No standalone Peer Layoff Rate included (year FE absorb it). ",
+      "Wald test H0: Cons. interaction = Lib. interaction: ",
+      "Diff = ", fmt4(diff_b), ", SE = ", fmt4(diff_se), ", p = ", fmt(diff_p, 3), ". ",
+      "Cannot reject equality, suggesting the effect is symmetric. ",
+      "***, **, * denote significance at the 1, 5, and 10 percent levels."),
+    general_title = "Note: ",
+    footnote_as_chunk = TRUE,
+    threeparttable = TRUE
+  )
+```
+
+\newpage
+
+```{r table8}
+# ══════════════════════════════════════════════════════════════
+# TABLE 8: ALTERNATIVE MODERATORS
+# ══════════════════════════════════════════════════════════════
+# All with firm + year FE. All moderators vary at industry-year or year level,
+# so no standalone moderator main effects (year FE absorb temporal variation,
+# firm FE absorb permanent industry sorting).
+
+# (1) Peer Layoff Rate
+m8_1 <- feols(as.formula(paste0(
+  "layoff ~ misalign_abs + misalign_abs:ind_layoff_rate + ", ctrl,
+  " | gvkey + fyear")), data = dt, cluster = ~gvkey)
+
+# (2) Industry Downturn
+m8_2 <- feols(as.formula(paste0(
+  "layoff ~ misalign_abs + misalign_abs:ind_downturn + ", ctrl,
+  " | gvkey + fyear")), data = dt, cluster = ~gvkey)
+
+# (3) Industry Sales Growth
+m8_3 <- feols(as.formula(paste0(
+  "layoff ~ misalign_abs + misalign_abs:ind_sale_growth + ", ctrl,
+  " | gvkey + fyear")), data = dt, cluster = ~gvkey)
+
+# (4) NBER Recession
+m8_4 <- feols(as.formula(paste0(
+  "layoff ~ misalign_abs + misalign_abs:recession + ", ctrl,
+  " | gvkey + fyear")), data = dt, cluster = ~gvkey)
+
+mods_t8 <- list(m8_1, m8_2, m8_3, m8_4)
+
+# Row: |Misalignment|
+row_mis <- make_row("misalign_abs", "|Misalignment|", mods_t8)
+
+# Moderator rows (different variable per column)
+mod_vars <- c("ind_layoff_rate", "ind_downturn", "ind_sale_growth", "recession")
+mod_coef <- sapply(1:4, function(j) {
+  r <- get_cp(mods_t8[[j]], mod_vars[j])
+  if (is.na(r[1])) return(c("", ""))
+  c(paste0(fmt4(r[1]), stars(r[3])), paste0("(", fmt4(r[2]), ")"))
+})
+if (!is.matrix(mod_coef)) mod_coef <- matrix(mod_coef, nrow = 2)
+mod_row1 <- c("Moderator", mod_coef[1, ])
+mod_row2 <- c("", mod_coef[2, ])
+
+# Interaction rows
+int_vars <- c("misalign_abs:ind_layoff_rate", "misalign_abs:ind_downturn",
+              "misalign_abs:ind_sale_growth", "misalign_abs:recession")
+int_coef <- sapply(1:4, function(j) {
+  r <- get_cp(mods_t8[[j]], int_vars[j])
+  if (is.na(r[1])) return(c("", ""))
+  c(paste0(fmt4(r[1]), stars(r[3])), paste0("(", fmt4(r[2]), ")"))
+})
+if (!is.matrix(int_coef)) int_coef <- matrix(int_coef, nrow = 2)
+int_row1 <- c(paste0("|Misalign| \u00d7 Moderator"), int_coef[1, ])
+int_row2 <- c("", int_coef[2, ])
+
+mod_labels <- c("Peer Layoff Rate", "Industry Downturn",
+                "Ind. Sales Growth", "NBER Recession")
+mname_row <- c("Moderator:", mod_labels)
+
+ctrl_row8 <- c("Controls", rep("Yes", 4))
+fe_row8 <- c("Firm + Year FE", rep("Yes", 4))
+cl_row8 <- c("Cluster", rep("Firm", 4))
+n_row8 <- c("Observations", sapply(mods_t8, function(m) fmt0(m$nobs)))
+r2_row8 <- c("R-squared", sapply(mods_t8, function(m) fmt(get_r2(m), 3)))
+
+tab8 <- as.data.frame(rbind(
+  mname_row,
+  row_mis,
+  mod_row1, mod_row2,
+  int_row1, int_row2,
+  ctrl_row8, fe_row8, cl_row8, n_row8, r2_row8
+), stringsAsFactors = FALSE)
+names(tab8) <- c("", "(1)", "(2)", "(3)", "(4)")
+
+kbl(tab8, booktabs = TRUE, align = c("l", rep("c", 4)),
+    caption = "Alternative Moderators of the Misalignment--Layoff Relationship",
+    row.names = FALSE) %>%
+  kable_styling(latex_options = c("hold_position"), font_size = 8,
+                full_width = FALSE, position = "center") %>%
+  row_spec(1, bold = TRUE) %>%
+  row_spec(6, hline_after = TRUE) %>%
+  footnote(
+    general = paste0(
+      "Dependent variable: Layoff indicator. Each column tests a different moderator. ",
+      "Peer Layoff Rate is the leave-one-out industry layoff share. ",
+      "Industry Downturn = 1 if industry sales growth is in the bottom quartile. ",
+      "No standalone moderator main effects are included because all moderators vary at the ",
+      "industry-year or year level, which is absorbed by firm + year FE. ",
+      "The Moderator row reports the main effect only if estimable (recession is collinear with year FE). ",
+      "***, **, * denote significance at the 1, 5, and 10 percent levels."),
+    general_title = "Note: ",
+    footnote_as_chunk = TRUE,
+    threeparttable = TRUE
+  )
+```
